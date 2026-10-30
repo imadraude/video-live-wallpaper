@@ -214,9 +214,13 @@ class VideoWallpaperService : WallpaperService() {
             }
         }
 
-        private fun needsGlRenderer(): Boolean =
-            prefs?.getInt(PREF_RENDER_MODE, DEFAULT_RENDER_MODE) != RENDER_MODE_EFFICIENT ||
-                isSelectedGif()
+        private fun needsGlRenderer(): Boolean {
+            val mode = prefs?.getInt(PREF_RENDER_MODE, DEFAULT_RENDER_MODE)
+                ?: DEFAULT_RENDER_MODE
+            // Skip file sniffing unless direct output was requested.
+            if (mode != RENDER_MODE_EFFICIENT) return true
+            return RenderModePolicy.requiresOpenGl(mode, isSelectedGif())
+        }
 
         override fun onVisibilityChanged(isVisible: Boolean) {
             visible = isVisible
@@ -662,8 +666,8 @@ class VideoWallpaperService : WallpaperService() {
         const val PREF_SCALING_MODE = "scaling_mode"
         const val PREF_RENDER_MODE = "render_mode"
         const val PREF_SOURCE_IS_GIF = "source_is_gif"
-        const val RENDER_MODE_COMPATIBLE = 0
-        const val RENDER_MODE_EFFICIENT = 1
+        const val RENDER_MODE_COMPATIBLE = RenderModePolicy.COMPATIBLE
+        const val RENDER_MODE_EFFICIENT = RenderModePolicy.EFFICIENT
         const val DEFAULT_RENDER_MODE = RENDER_MODE_COMPATIBLE
         const val DEFAULT_SPEED = 1.0f
         const val DEFAULT_SCALING_MODE = MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
