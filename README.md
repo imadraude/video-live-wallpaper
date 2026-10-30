@@ -43,9 +43,8 @@ live wallpapers:
 - **MediaPlayer** is the original default. Existing installations retain
   their behavior unless the user explicitly selects Media3.
 - **Media3** uses AndroidX Media3 1.11.1 with hardware
-  codec output, repeat-one playback, no selected audio track, and a direct
-  wallpaper Surface for Efficient Fill or the existing OpenGL SurfaceTexture
-  pipeline for Compatible/Fit.
+  codec output, repeat-one playback and no selected audio track. It shares
+  the same aspect-safe direct/GL output routing as MediaPlayer.
 - Both engines detach and reuse prepared players when the same wallpaper
   Engine's Surface is recreated; neither continues video playback while
   hidden. GIFs use the original GIF renderer regardless of the selected engine.
@@ -63,14 +62,17 @@ live wallpaper, not the preview.
 
 ## Wallpaper rendering modes
 
-- **Efficient (Ефективний)** sends **Fill** video directly from Android's
-  MediaPlayer to the wallpaper Surface, avoiding the app's extra OpenGL pass.
-  Some devices ignore native scaling on wallpaper surfaces. With **Fit**
-  selected, Efficient automatically uses the OpenGL renderer so the complete
-  video is visible without stretching, with black letterbox/pillarbox bars.
-  The renderer accounts for quarter-turn (90/270 degree) video texture
-  orientation when calculating the displayed aspect ratio.
-  Switching Fill/Fit while Efficient is selected reconfigures the pipeline.
+- **Efficient (Ефективний)** uses direct video output only when the
+  selected source has a measured aspect ratio matching the actual wallpaper
+  Surface, so Android cannot distort it. Other **Fill** videos automatically
+  use the event-driven OpenGL renderer to crop edges without stretching.
+  **Fit** always uses OpenGL to preserve the entire video with black bars.
+  Source dimensions are cached from the already-prepared in-app preview and
+  checked again against decoder dimensions at runtime. Unknown or
+  mismatched dimensions default to safe aspect-correct OpenGL output. The
+  renderer accounts for 90/270 degree video texture orientation.
+  This deliberate fallback uses some extra GPU bandwidth but preserves
+  aspect ratio in both MediaPlayer and Media3.
 - **Compatible (Сумісний)** uses the OpenGL ES pipeline for both Fill and Fit
   with aspect-correct cropping and letterboxing. It remains the default for
   existing installations.
