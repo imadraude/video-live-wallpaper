@@ -4,6 +4,7 @@ import android.content.SharedPreferences
 import android.os.SystemClock
 import android.media.MediaPlayer
 import android.media.PlaybackParams
+import androidx.media3.common.PlaybackException
 import android.net.Uri
 import android.os.Handler
 import android.os.HandlerThread
@@ -44,6 +45,10 @@ class VideoWallpaperService : WallpaperService() {
     inner class VideoEngine : Engine(), SharedPreferences.OnSharedPreferenceChangeListener {
 
         private var mediaPlayer: MediaPlayer? = null
+        // Experimental Media3 backend: never active concurrently with
+        // MediaPlayer, and uses the same EGL/native output selection.
+        private var media3Player: Media3WallpaperPlayer? = null
+        private var media3AwaitingSurface = false
         // A preparing MediaPlayer must not receive start/pause on unlock.
         private var playerPrepared = false
         // A retained decoder has no video destination until the replacement
@@ -59,6 +64,7 @@ class VideoWallpaperService : WallpaperService() {
         private val playbackHandler = Handler(Looper.getMainLooper())
         private val pausePlaybackRunnable = Runnable {
             if (!visible && currentHolder != null) {
+                media3Player?.setPlaying(false)
                 mediaPlayer?.let { player ->
                     val speed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
                     applySpeed(player, speed)
@@ -254,6 +260,10 @@ class VideoWallpaperService : WallpaperService() {
          * opening the video again or running prepareAsync again.
          */
         private fun attachOrPreparePlayer(holder: SurfaceHolder) {
+            if (isMedia3Selected() && !isSelectedGif()) {
+                attachOrPrepareMedia3(holder)
+                return
+            }
             val retained = mediaPlayer
             if (retained != null && PlaybackReusePolicy.canReuseVideoDecoder(playerPrepared, isSelectedGif())) {
                 try {
@@ -277,6 +287,97 @@ class VideoWallpaperService : WallpaperService() {
                 }
             }
             preparePlayer(holder)
+        }
+
+        private fun isMedia3Selected(): Boolean =
+            prefs?.getInt(PREF_PLAYBACK_ENGINE, DEFAULT_PLAYBACK_ENGINE) == PLAYBACK_ENGINE_MEDIA3
+
+        /**
+         * Media3 uses the same video Surface as the original MediaPlayer.
+         * On wallpaper surface recreation, preserve a prepared Media3 codec
+         * by reattaching its new surface without reloading the media item.
+         */
+        private fun attachOrPrepareMedia3(holder: SurfaceHolder) {
+            val retained = media3Player
+            if (retained != null && retained.prepared) {
+                try {
+                    retained.setSurface(renderer?.getVideoInputSurface() ?: holder.surface)
+                    media3AwaitingSurface = false
+                    awaitingVideoSurface = false
+                    val speed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
+                    retained.setSpeed(speed)
+                    retained.setPlaying(visible)
+                    startDrawLoopIfVisible()
+                    Log.i(TAG, "Media3: reused prepared player after surface recreation")
+                    return
+                } catch (e: RuntimeException) {
+                    Log.w(TAG, "Media3 surface reattach failed; recreating backend", e)
+                }
+            }
+            prepareMedia3(holder)
+        }
+
+        private fun prepareMedia3(holder: SurfaceHolder) {
+            releasePlayer()
+            val uriString = prefs?.getString(PREF_VIDEO_URI, null) ?: return
+            val uri = try { Uri.parse(uriString) } catch (e: Exception) { return }
+            val stillGranted = try {
+                applicationContext.contentResolver.persistedUriPermissions.any {
+                    it.uri == uri && it.isReadPermission
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Media3 failed checking selected video permission", e)
+                false
+            }
+            if (!stillGranted) {
+                Log.w(TAG, "Media3 video file permission missing; clearing selection")
+                prefs?.edit()?.remove(PREF_VIDEO_URI)?.apply()
+                return
+            }
+            try {
+                lateinit var backend: Media3WallpaperPlayer
+                backend = Media3WallpaperPlayer(
+                    applicationContext,
+                    uri,
+                    renderer?.getVideoInputSurface() ?: holder.surface,
+                    prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED,
+                    onVideoSize = { width, height ->
+                        if (media3Player === backend) {
+                            videoWidth = width
+                            videoHeight = height
+                            startDrawLoopIfVisible()
+                        }
+                    },
+                    onReady = {
+                        if (media3Player === backend) {
+                            consecutiveErrorRetries = 0
+                            backend.setPlaying(visible && !media3AwaitingSurface)
+                            startDrawLoopIfVisible()
+                        }
+                    },
+                    onError = { error: PlaybackException ->
+                        if (media3Player === backend) {
+                            Log.e(TAG, "Media3 failed: ${error.errorCodeName}")
+                            val retryCount = ++consecutiveErrorRetries
+                            releasePlayer()
+                            if (retryCount <= MAX_CONSECUTIVE_ERROR_RETRIES) {
+                                val retryGeneration = prepareGeneration
+                                playbackHandler.postDelayed({
+                                    if (retryGeneration == prepareGeneration && isMedia3Selected()) {
+                                        currentHolder?.let { prepareMedia3(it) }
+                                    }
+                                }, 300L * retryCount)
+                            }
+                        }
+                    }
+                )
+                media3Player = backend
+                media3AwaitingSurface = false
+                Log.i(TAG, "Media3: preparing repeat-one video")
+            } catch (e: Exception) {
+                Log.e(TAG, "Media3 backend failed initializing; keeping file selection", e)
+                releasePlayer()
+            }
         }
 
         private fun isSelectedGif(): Boolean {
@@ -318,6 +419,19 @@ class VideoWallpaperService : WallpaperService() {
             }
             renderHandler?.post {
                 if (isVisible) gifPlayer?.start() else gifPlayer?.pause()
+            }
+            media3Player?.let { backend ->
+                if (currentHolder != null && !media3AwaitingSurface) {
+                    if (isVisible) {
+                        backend.setSpeed(
+                            prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
+                        )
+                        if (backend.prepared) backend.setPlaying(true)
+                    } else if (backend.prepared) {
+                        playbackHandler.postDelayed(pausePlaybackRunnable, VISIBILITY_PAUSE_DELAY_MS)
+                    }
+                }
+                return
             }
             val player = mediaPlayer ?: return
             if (currentHolder == null || awaitingVideoSurface) return
@@ -378,7 +492,10 @@ class VideoWallpaperService : WallpaperService() {
          * selection is discarded: the next Surface will prepare it afresh.
          */
         fun releaseDetachedDecoderForMemory(level: Int) {
-            if (currentHolder == null && awaitingVideoSurface && mediaPlayer != null) {
+            if (currentHolder == null &&
+                ((awaitingVideoSurface && mediaPlayer != null) ||
+                    (media3AwaitingSurface && media3Player != null))
+            ) {
                 Log.i(TAG, "Memory trim level=$level: releasing detached decoder")
                 releasePlayer()
             }
@@ -391,6 +508,18 @@ class VideoWallpaperService : WallpaperService() {
          * in the asynchronous preparation state.
          */
         private fun detachOrReleasePlayer() {
+            val media3 = media3Player
+            if (media3 != null) {
+                if (!media3.prepared) {
+                    releasePlayer()
+                    return
+                }
+                media3.setPlaying(false)
+                media3.detachSurface()
+                media3AwaitingSurface = true
+                Log.i(TAG, "Media3 decoder paused/detached until Engine destroyed")
+                return
+            }
             val player = mediaPlayer
             if (player == null || !PlaybackReusePolicy.canReuseVideoDecoder(playerPrepared, isSelectedGif())) {
                 releasePlayer()
@@ -445,6 +574,7 @@ class VideoWallpaperService : WallpaperService() {
                     val speed = sharedPreferences?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED)
                         ?: DEFAULT_SPEED
                     if (playerPrepared) mediaPlayer?.let { applySpeed(it, speed) }
+                    media3Player?.setSpeed(speed)
                     renderHandler?.post { gifPlayer?.setSpeed(speed) }
                 }
                 PREF_SCALING_MODE -> {
@@ -470,7 +600,7 @@ class VideoWallpaperService : WallpaperService() {
                         mediaPlayer?.let { applyNativeScaling(it) }
                     }
                 }
-                PREF_VIDEO_URI, PREF_RENDER_MODE -> {
+                PREF_VIDEO_URI, PREF_RENDER_MODE, PREF_PLAYBACK_ENGINE -> {
                     // A direct Surface and an OpenGL input Surface are different
                     // video output paths; switch them only when the user changes
                     // the file or rendering mode, never on each visibility event.
@@ -792,9 +922,12 @@ class VideoWallpaperService : WallpaperService() {
             } else {
                 gifPlayer = null
             }
-            // release() is valid even when playback is active; calling
-            // isPlaying() and stop() first adds synchronous native/binder
-            // work on the wallpaper lifecycle thread for no benefit.
+            // Never keep both decoding engines alive. Release whichever
+            // backend was active, and invalidate callbacks before reprepare.
+            val media3 = media3Player
+            media3Player = null
+            media3AwaitingSurface = false
+            media3?.release()
             mediaPlayer?.release()
             mediaPlayer = null
             playerPrepared = false
@@ -815,6 +948,10 @@ class VideoWallpaperService : WallpaperService() {
         const val PREF_SCALING_MODE = "scaling_mode"
         const val PREF_RENDER_MODE = "render_mode"
         const val PREF_SOURCE_IS_GIF = "source_is_gif"
+        const val PREF_PLAYBACK_ENGINE = "playback_engine"
+        const val PLAYBACK_ENGINE_SYSTEM = 0
+        const val PLAYBACK_ENGINE_MEDIA3 = 1
+        const val DEFAULT_PLAYBACK_ENGINE = PLAYBACK_ENGINE_SYSTEM
         const val RENDER_MODE_COMPATIBLE = RenderModePolicy.COMPATIBLE
         const val RENDER_MODE_EFFICIENT = RenderModePolicy.EFFICIENT
         const val DEFAULT_RENDER_MODE = RENDER_MODE_COMPATIBLE
