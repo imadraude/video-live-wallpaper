@@ -105,6 +105,7 @@ class VideoFrameRenderer {
     // thread.
     @Volatile
     private var frameAvailable: Boolean = false
+    private var hasDecodedVideoFrame = false
 
     /**
      * Optional external hook called whenever a new frame arrives (same
@@ -305,7 +306,11 @@ class VideoFrameRenderer {
             frameAvailable = false
             texture.updateTexImage()
             texture.getTransformMatrix(texMatrix)
+            hasDecodedVideoFrame = true
         }
+        // Avoid submitting an uninitialized (often black) external texture
+        // while waiting for the first decoded frame after unlock.
+        if (!hasDecodedVideoFrame) return
 
         if (videoWidth != lastVideoWidth || videoHeight != lastVideoHeight ||
             viewportWidth != lastViewportWidth || viewportHeight != lastViewportHeight ||
@@ -320,8 +325,13 @@ class VideoFrameRenderer {
         }
 
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
-        GLES20.glClearColor(0f, 0f, 0f, 1f)
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        // FILL draws an opaque full-screen quad, so clearing the entire
+        // framebuffer every video frame just burns GPU bandwidth.
+        // FIT needs black bars around the reduced quad.
+        if (scalingMode == ScalingMode.FIT) {
+            GLES20.glClearColor(0f, 0f, 0f, 1f)
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        }
 
         GLES20.glUseProgram(shaderProgram)
         GLES20.glUniformMatrix4fv(texMatrixHandle, 1, false, texMatrix, 0)
@@ -607,8 +617,13 @@ class VideoFrameRenderer {
         }
 
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
-        GLES20.glClearColor(0f, 0f, 0f, 1f)
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        // FILL draws an opaque full-screen quad, so clearing the entire
+        // framebuffer every video frame just burns GPU bandwidth.
+        // FIT needs black bars around the reduced quad.
+        if (scalingMode == ScalingMode.FIT) {
+            GLES20.glClearColor(0f, 0f, 0f, 1f)
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        }
 
         GLES20.glUseProgram(gifProgram)
 
@@ -724,6 +739,7 @@ class VideoFrameRenderer {
         onFrameAvailableListener = null
         videoSurfaceTexture?.setOnFrameAvailableListener(null)
         frameAvailable = false
+        hasDecodedVideoFrame = false
         videoSurface?.release()
         videoSurface = null
         videoSurfaceTexture?.release()
@@ -855,7 +871,8 @@ class VideoFrameRenderer {
             varying vec2 vTexCoord;
             uniform samplerExternalOES uTexture;
             void main() {
-                gl_FragColor = texture2D(uTexture, vTexCoord);
+                // Wallpaper buffers are fully opaque.
+                gl_FragColor = vec4(texture2D(uTexture, vTexCoord).rgb, 1.0);
             }
         """
     }
