@@ -86,11 +86,26 @@ and still needs validation against native playback.
 
 ## Unlock responsiveness (fork)
 
-The wallpaper now caches video dimensions, coalesces rapid frame callbacks
-instead of accumulating GL work, and defers pausing the video decoder for
-300 ms when visibility is briefly lost during lock/unlock animations.
-The decoder still pauses when the wallpaper stays hidden. This is a targeted
-first fix, not a guarantee against system/OEM delays during surface recreation.
+Video dimensions are cached and OpenGL frame callbacks arrive on the render
+thread, where frames can now be drawn immediately without an additional
+queued task. Fast hide/show transitions keep video playback warm for up to
+1.1 seconds instead of repeatedly pausing and starting the codec.
+
+When Android briefly destroys and recreates **the same wallpaper Engine's**
+output Surface, a prepared video MediaPlayer can remain paused for up to
+2.5 seconds, temporarily detach from the old Surface and attach to the new
+one. This avoids reopening the file and re-running `prepareAsync()` during
+rapid surface transitions. When the Engine is destroyed, the old player is
+released normally; a new Engine cannot reuse another Engine's player.
+
+The release path no longer calls the synchronous `isPlaying()` and `stop()`
+methods just before `release()`. GIFs and incomplete video preparations still
+use the original safe teardown flow. These changes target minor unlock
+stutters without decoding video indefinitely while the screen is off.
+
+**Device verification is required.** A long lock, OS process restart, or a
+new wallpaper Engine may still need decoder/EGL initialization. Remaining
+jank should be investigated with device logs and a frame timeline.
 
 ---
 
