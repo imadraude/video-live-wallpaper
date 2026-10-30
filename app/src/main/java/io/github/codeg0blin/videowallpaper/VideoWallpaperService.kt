@@ -149,15 +149,16 @@ class VideoWallpaperService : WallpaperService() {
         }
 
         /**
-         * Direct mode hands decoded video straight to Android's wallpaper
-         * Surface, bypassing our EGL context, GL shaders and extra frame draw.
-         * Animated GIFs always retain the GL pipeline (they have no MediaPlayer
-         * decoder). Only recreate these resources on source/mode changes.
+         * Direct output is used only when the selected settings can be
+         * displayed without modifying the aspect ratio. Native wallpaper
+         * surfaces may ignore MediaPlayer's Fit scaling hint, so Fit always
+         * uses the existing OpenGL renderer for proper black letterbox bars.
+         * GIFs also always require the OpenGL renderer.
          */
         private fun configureOutput(holder: SurfaceHolder) {
             if (currentHolder !== holder) return
             if (!needsGlRenderer()) {
-                Log.i(TAG, "Efficient mode: native video surface, no OpenGL renderer")
+                Log.i(TAG, "Efficient Fill mode: native video surface, no OpenGL renderer")
                 preparePlayer(holder)
                 return
             }
@@ -225,9 +226,12 @@ class VideoWallpaperService : WallpaperService() {
         private fun needsGlRenderer(): Boolean {
             val mode = prefs?.getInt(PREF_RENDER_MODE, DEFAULT_RENDER_MODE)
                 ?: DEFAULT_RENDER_MODE
-            // Skip file sniffing unless direct output was requested.
-            if (mode != RENDER_MODE_EFFICIENT) return true
-            return RenderModePolicy.requiresOpenGl(mode, isSelectedGif())
+            val fit = prefs?.getInt(PREF_SCALING_MODE, DEFAULT_SCALING_MODE) ==
+                MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT
+            // Compatible and Fit always use GL. Avoid sniffing the video
+            // header unless native output would otherwise be possible.
+            if (mode != RENDER_MODE_EFFICIENT || fit) return true
+            return RenderModePolicy.requiresOpenGl(mode, isSelectedGif(), fit = false)
         }
 
         override fun onVisibilityChanged(isVisible: Boolean) {
@@ -323,22 +327,26 @@ class VideoWallpaperService : WallpaperService() {
                     renderHandler?.post { gifPlayer?.setSpeed(speed) }
                 }
                 PREF_SCALING_MODE -> {
-                    // The direct Surface may honor the system player's scaling
-                    // hint on some devices. Don't rebuild the decoder for this.
-                    if (playerPrepared && renderer == null) {
-                        mediaPlayer?.let { applyNativeScaling(it) }
-                    }
-                    // Unlike video URI, scaling mode doesn't need a full
-                    // MediaPlayer re-prepare now that it's handled by the
-                    // renderer's geometry rather than MediaPlayer itself —
-                    // just update the renderer's mode on its own thread.
-                    val handler = renderHandler
-                    if (handler != null) {
-                        handler.post {
+                    // A wallpaper's native Surface may stretch Fit video,
+                    // ignoring MediaPlayer.setVideoScalingMode(). When a
+                    // user switches to/from Fit in Efficient mode, switch
+                    // pipelines so that Fit uses GL letterboxing. Do not
+                    // re-create the decoder for changes entirely inside GL.
+                    val shouldUseGl = needsGlRenderer()
+                    val currentlyUsingGl = renderHandler != null
+                    if (shouldUseGl != currentlyUsingGl) {
+                        releasePlayer()
+                        releaseRenderer()
+                        configureOutput(holder)
+                    } else if (currentlyUsingGl) {
+                        renderHandler?.post {
                             applyScalingModePref()
-                            // A paused or single-frame GIF won't redraw on its own.
+                            // Redraw immediately, including paused GIF frames.
                             if (gifPlayer != null) drawFrameRunnable.run()
+                            else startDrawLoopIfVisible()
                         }
+                    } else if (playerPrepared) {
+                        mediaPlayer?.let { applyNativeScaling(it) }
                     }
                 }
                 PREF_VIDEO_URI, PREF_RENDER_MODE -> {

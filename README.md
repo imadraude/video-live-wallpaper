@@ -37,13 +37,16 @@ then publishes a GitHub Release for Obtainium.
 
 ## Wallpaper rendering modes
 
-- **Efficient (Ефективний)** sends video directly from Android's MediaPlayer
-  to the wallpaper Surface. It avoids the app's extra OpenGL rendering pass
-  and requires no EGL renderer thread for regular video. This can lower GPU
-  work, but device-specific video scaling might ignore Fill/Fit on wallpaper
-  surfaces. Select Compatible if crop or aspect ratio looks incorrect.
-- **Compatible (Сумісний)** is the previous OpenGL ES pipeline and retains
-  precise Fill/Fit scaling and rotation behavior. It remains the default for
+- **Efficient (Ефективний)** sends **Fill** video directly from Android's
+  MediaPlayer to the wallpaper Surface, avoiding the app's extra OpenGL pass.
+  Some devices ignore native scaling on wallpaper surfaces. With **Fit**
+  selected, Efficient automatically uses the OpenGL renderer so the complete
+  video is visible without stretching, with black letterbox/pillarbox bars.
+  The renderer accounts for quarter-turn (90/270 degree) video texture
+  orientation when calculating the displayed aspect ratio.
+  Switching Fill/Fit while Efficient is selected reconfigures the pipeline.
+- **Compatible (Сумісний)** uses the OpenGL ES pipeline for both Fill and Fit
+  with aspect-correct cropping and letterboxing. It remains the default for
   existing installations.
 - GIF wallpapers always use Compatible rendering, even if Efficient is
   selected, because the custom GIF decoder needs a GPU texture.

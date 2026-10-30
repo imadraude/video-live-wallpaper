@@ -289,13 +289,19 @@ class VideoFrameRenderer {
         // while waiting for the first decoded frame after unlock.
         if (!hasDecodedVideoFrame) return
 
-        if (videoWidth != lastVideoWidth || videoHeight != lastVideoHeight ||
+        // SurfaceTexture may rotate video stored as landscape pixels into
+        // portrait on display. Using the encoded dimensions for Fit in that
+        // case would produce wrong letterboxing or a distorted picture.
+        val quarterTurn = VideoOrientation.hasQuarterTurn(texMatrix)
+        val displayWidth = if (quarterTurn) videoHeight else videoWidth
+        val displayHeight = if (quarterTurn) videoWidth else videoHeight
+        if (displayWidth != lastVideoWidth || displayHeight != lastVideoHeight ||
             viewportWidth != lastViewportWidth || viewportHeight != lastViewportHeight ||
             scalingMode != lastScalingMode
         ) {
-            updateGeometry(viewportWidth, viewportHeight, videoWidth, videoHeight)
-            lastVideoWidth = videoWidth
-            lastVideoHeight = videoHeight
+            updateGeometry(viewportWidth, viewportHeight, displayWidth, displayHeight)
+            lastVideoWidth = displayWidth
+            lastVideoHeight = displayHeight
             lastViewportWidth = viewportWidth
             lastViewportHeight = viewportHeight
             lastScalingMode = scalingMode
