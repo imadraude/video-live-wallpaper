@@ -1,6 +1,7 @@
 package io.github.codeg0blin.videowallpaper
 
 import android.content.SharedPreferences
+import android.os.SystemClock
 import android.media.MediaPlayer
 import android.media.PlaybackParams
 import android.net.Uri
@@ -23,7 +24,22 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class VideoWallpaperService : WallpaperService() {
 
-    override fun onCreateEngine(): Engine = VideoEngine()
+    // Framework callbacks (Engine and Service) are delivered on the main
+    // thread. Tracking live Engines lets the system reclaim any retained,
+    // detached video decoders when memory becomes constrained.
+    private val liveEngines = mutableSetOf<VideoEngine>()
+
+    override fun onCreateEngine(): Engine = VideoEngine().also {
+        liveEngines.add(it)
+        Log.i(TAG, "Engine created id=${System.identityHashCode(it)}")
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (PlaybackReusePolicy.shouldReleaseDetachedForMemory(level)) {
+            liveEngines.toList().forEach { it.releaseDetachedDecoderForMemory(level) }
+        }
+    }
 
     inner class VideoEngine : Engine(), SharedPreferences.OnSharedPreferenceChangeListener {
 
@@ -49,15 +65,12 @@ class VideoWallpaperService : WallpaperService() {
                 }
             }
         }
-        // Keep the already prepared codec only across quick wallpaper surface
-        // recreation. The timeout avoids retaining a hardware decoder when
-        // Android has permanently removed the wallpaper surface.
-        private val releaseDetachedPlayerRunnable = Runnable {
-            if (currentHolder == null) {
-                Log.d(TAG, "Detached surface grace expired; releasing idle video decoder")
-                releasePlayer()
-            }
-        }
+        // The decoder is paused and detached when Android removes the output
+        // Surface. Keep it warm for this Engine's whole lifetime, including
+        // long screen-off periods. onDestroy() or onTrimMemory releases it.
+        private var lastSurfaceDetachedAtMs = 0L
+        @Volatile private var lastBecameVisibleAtMs = 0L
+        @Volatile private var firstFrameAfterVisiblePending = false
 
         // Coalesce frame callbacks; never queue unlimited GL draws on unlock.
         private val frameDrawQueued = AtomicBoolean(false)
@@ -156,7 +169,10 @@ class VideoWallpaperService : WallpaperService() {
         override fun onSurfaceCreated(holder: SurfaceHolder) {
             super.onSurfaceCreated(holder)
             currentHolder = holder
-            playbackHandler.removeCallbacks(releaseDetachedPlayerRunnable)
+            val surfaceAbsentMs = if (lastSurfaceDetachedAtMs > 0L) {
+                SystemClock.elapsedRealtime() - lastSurfaceDetachedAtMs
+            } else 0L
+            Log.i(TAG, "Surface created id=${System.identityHashCode(this)} after=${surfaceAbsentMs}ms, warmCodec=${mediaPlayer != null && playerPrepared}")
             consecutiveErrorRetries = 0
             configureOutput(holder)
         }
@@ -203,6 +219,11 @@ class VideoWallpaperService : WallpaperService() {
                             // SurfaceTexture delivers this callback on the
                             // renderer's HandlerThread. Drawing here avoids
                             // one extra Handler.post() hop per video frame.
+                            if (firstFrameAfterVisiblePending) {
+                                firstFrameAfterVisiblePending = false
+                                Log.i(TAG, "OpenGL first decoded frame after visible: " +
+                                    "${SystemClock.elapsedRealtime() - lastBecameVisibleAtMs}ms")
+                            }
                             handler.removeCallbacks(drawFrameRunnable)
                             frameDrawQueued.set(false)
                             drawFrameRunnable.run()
@@ -233,14 +254,16 @@ class VideoWallpaperService : WallpaperService() {
          * opening the video again or running prepareAsync again.
          */
         private fun attachOrPreparePlayer(holder: SurfaceHolder) {
-            playbackHandler.removeCallbacks(releaseDetachedPlayerRunnable)
             val retained = mediaPlayer
             if (retained != null && PlaybackReusePolicy.canReuseVideoDecoder(playerPrepared, isSelectedGif())) {
                 try {
                     val surface = renderer?.getVideoInputSurface() ?: holder.surface
+                    val attachStartedAtMs = SystemClock.elapsedRealtime()
                     retained.setSurface(surface)
                     awaitingVideoSurface = false
-                    Log.d(TAG, "Reused prepared MediaPlayer after wallpaper surface recreation")
+                    Log.i(TAG, "Reattached warm video decoder in " +
+                        "${SystemClock.elapsedRealtime() - attachStartedAtMs}ms" +
+                        ", surfaceDetachedFor=${SystemClock.elapsedRealtime() - lastSurfaceDetachedAtMs}ms")
                     if (renderer == null) applyNativeScaling(retained)
                     if (visible) {
                         val speed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED)
@@ -282,6 +305,11 @@ class VideoWallpaperService : WallpaperService() {
 
         override fun onVisibilityChanged(isVisible: Boolean) {
             visible = isVisible
+            if (isVisible) {
+                lastBecameVisibleAtMs = SystemClock.elapsedRealtime()
+                firstFrameAfterVisiblePending = true
+            }
+            Log.d(TAG, "Visibility changed id=${System.identityHashCode(this)}, visible=$isVisible, warmCodec=${playerPrepared}, detached=${awaitingVideoSurface}")
             playbackHandler.removeCallbacks(pausePlaybackRunnable)
             if (isVisible) {
                 startDrawLoopIfVisible()
@@ -326,15 +354,19 @@ class VideoWallpaperService : WallpaperService() {
             super.onSurfaceDestroyed(holder)
             currentHolder = null
             visible = false
+            lastSurfaceDetachedAtMs = SystemClock.elapsedRealtime()
             playbackHandler.removeCallbacks(pausePlaybackRunnable)
-            // Keep a prepared video decoder alive briefly for the next
-            // Surface. The EGL output still must be destroyed because its
-            // window Surface is invalid after this callback.
+            // A paused and detached codec does not render in the background.
+            // Keep it until Engine destruction / Android memory pressure
+            // instead of discarding it after only 2.5 seconds. EGL's window
+            // Surface is still destroyed because it is no longer valid.
             detachOrReleasePlayer()
             releaseRenderer()
         }
 
         override fun onDestroy() {
+            Log.i(TAG, "Engine destroyed id=${System.identityHashCode(this)}")
+            liveEngines.remove(this)
             super.onDestroy()
             prefs?.unregisterOnSharedPreferenceChangeListener(this)
             releasePlayer()
@@ -342,10 +374,21 @@ class VideoWallpaperService : WallpaperService() {
         }
 
         /**
+         * Release an idle codec on low-memory signals. No video data or
+         * selection is discarded: the next Surface will prepare it afresh.
+         */
+        fun releaseDetachedDecoderForMemory(level: Int) {
+            if (currentHolder == null && awaitingVideoSurface && mediaPlayer != null) {
+                Log.i(TAG, "Memory trim level=$level: releasing detached decoder")
+                releasePlayer()
+            }
+        }
+
+        /**
          * Pause and detach the output surface without tearing down the video
-         * codec. The same Engine can receive a new Surface shortly after
-         * a lock-screen transition. Never retain GIF playback or players
-         * still in the asynchronous preparation state.
+         * codec. The same Engine can receive a new Surface even after a long
+         * screen-off interval. Never retain GIF playback or players still
+         * in the asynchronous preparation state.
          */
         private fun detachOrReleasePlayer() {
             val player = mediaPlayer
@@ -360,10 +403,7 @@ class VideoWallpaperService : WallpaperService() {
                 }
                 player.setSurface(null)
                 awaitingVideoSurface = true
-                playbackHandler.removeCallbacks(releaseDetachedPlayerRunnable)
-                playbackHandler.postDelayed(
-                    releaseDetachedPlayerRunnable, SURFACE_REUSE_GRACE_MS
-                )
+                Log.i(TAG, "Video decoder paused/detached; retaining for Engine lifetime")
             } catch (e: RuntimeException) {
                 Log.w(TAG, "Cannot detach video surface; releasing decoder", e)
                 releasePlayer()
@@ -443,6 +483,8 @@ class VideoWallpaperService : WallpaperService() {
 
         private fun preparePlayer(holder: SurfaceHolder) {
             releasePlayer()
+            val prepareStartedAtMs = SystemClock.elapsedRealtime()
+            Log.i(TAG, "Cold video prepare started (engine=${System.identityHashCode(this)})")
 
             val uriString = prefs?.getString(PREF_VIDEO_URI, null)
             if (uriString.isNullOrBlank()) return
@@ -507,6 +549,8 @@ class VideoWallpaperService : WallpaperService() {
                 player.setOnPreparedListener {
                     if (it !== mediaPlayer) return@setOnPreparedListener
                     playerPrepared = true
+                    Log.i(TAG, "Cold video prepared in " +
+                        "${SystemClock.elapsedRealtime() - prepareStartedAtMs}ms")
                     videoWidth = it.videoWidth
                     videoHeight = it.videoHeight
                     consecutiveErrorRetries = 0
@@ -514,6 +558,17 @@ class VideoWallpaperService : WallpaperService() {
                     val latestSpeed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
                     applySpeed(it, latestSpeed)
                     startDrawLoopIfVisible()
+                }
+                player.setOnInfoListener { infoPlayer, what, _ ->
+                    if (infoPlayer === mediaPlayer &&
+                        what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START
+                    ) {
+                        val elapsedMs = if (lastBecameVisibleAtMs > 0L) {
+                            SystemClock.elapsedRealtime() - lastBecameVisibleAtMs
+                        } else -1L
+                        Log.i(TAG, "Native first frame after visibility: ${elapsedMs}ms")
+                    }
+                    false
                 }
                 player.setOnErrorListener { errorPlayer, what, extra ->
                     if (errorPlayer !== mediaPlayer) return@setOnErrorListener true
@@ -724,7 +779,6 @@ class VideoWallpaperService : WallpaperService() {
 
         private fun releasePlayer() {
             playbackHandler.removeCallbacks(pausePlaybackRunnable)
-            playbackHandler.removeCallbacks(releaseDetachedPlayerRunnable)
             // Invalidate any GIF load still in flight, and stop/discard the
             // active GIF player on the render thread that owns it. If there
             // is no render thread any more, nothing else can be using it.
@@ -756,7 +810,6 @@ class VideoWallpaperService : WallpaperService() {
         private const val TAG = "VideoWallpaperService"
         private const val MAX_CONSECUTIVE_ERROR_RETRIES = 3
         private const val VISIBILITY_PAUSE_DELAY_MS = 1100L
-        private const val SURFACE_REUSE_GRACE_MS = 2500L
         const val PREF_VIDEO_URI = "selected_video_uri"
         const val PREF_PLAYBACK_SPEED = "playback_speed"
         const val PREF_SCALING_MODE = "scaling_mode"

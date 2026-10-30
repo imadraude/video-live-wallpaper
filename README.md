@@ -91,21 +91,33 @@ thread, where frames can now be drawn immediately without an additional
 queued task. Fast hide/show transitions keep video playback warm for up to
 1.1 seconds instead of repeatedly pausing and starting the codec.
 
-When Android briefly destroys and recreates **the same wallpaper Engine's**
-output Surface, a prepared video MediaPlayer can remain paused for up to
-2.5 seconds, temporarily detach from the old Surface and attach to the new
-one. This avoids reopening the file and re-running `prepareAsync()` during
-rapid surface transitions. When the Engine is destroyed, the old player is
-released normally; a new Engine cannot reuse another Engine's player.
+When Android destroys and later recreates **the same wallpaper Engine's**
+output Surface, a prepared video MediaPlayer now remains **paused and detached
+for the Engine's lifetime**, not just 2.5 seconds. This avoids reopening the
+file and re-running `prepareAsync()` even after a long period with the screen
+off, while not drawing frames or consuming continuous CPU. The idle decoder
+does retain some memory/hardware codec resources; Android's relevant
+low-memory trim callbacks cause it to be released. The old decoder is also
+released when the Engine is destroyed, so a completely new Engine or process
+may still need a cold start.
 
 The release path no longer calls the synchronous `isPlaying()` and `stop()`
 methods just before `release()`. GIFs and incomplete video preparations still
 use the original safe teardown flow. These changes target minor unlock
 stutters without decoding video indefinitely while the screen is off.
 
-**Device verification is required.** A long lock, OS process restart, or a
-new wallpaper Engine may still need decoder/EGL initialization. Remaining
-jank should be investigated with device logs and a frame timeline.
+Lifecycle diagnostics are logged under `VideoWallpaperService`: the app
+records when an Engine/Surface is recreated, whether the prepared decoder was
+reused, cold preparation time, and first video frame time. Logs contain no
+video paths or selected file names. Android can still discard the Engine or
+the process during a long screen-off interval, in which case an entirely new
+decoder and EGL context may be necessary.
+
+**Device verification is required.** Test cold unlock after a minute and
+after a longer interval with the same file. For USB/ADB debugging, collect
+`adb logcat -d -s VideoWallpaperService:I VideoFrameRenderer:W` just after a
+stutter. The traces distinguish a cold decoder reprepare from a reused player;
+they are not a full frame-timeline profiler.
 
 ---
 
