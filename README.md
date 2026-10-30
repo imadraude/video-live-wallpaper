@@ -35,6 +35,33 @@ Pull requests run unit tests and produce a short-lived debug artifact.
 Each push to `main` runs tests, builds and verifies a signed release APK,
 then publishes a GitHub Release for Obtainium.
 
+## Experimental Media3 playback engine (fork)
+
+The **Playback engine** switch allows an A/B comparison on the same device,
+file, playback speed, wallpaper Surface, and rendering mode:
+
+- **MediaPlayer** is the original default. Existing installations retain
+  their behavior unless the user explicitly selects Media3.
+- **Media3 ExoPlayer** uses stable AndroidX Media3 1.11.1 with hardware
+  codec output, repeat-one playback, no selected audio track, and a direct
+  wallpaper Surface for Efficient Fill or the existing OpenGL SurfaceTexture
+  pipeline for Compatible/Fit.
+- Both engines detach and reuse prepared players when the same wallpaper
+  Engine's Surface is recreated; neither continues video playback while
+  hidden. GIFs use the original GIF renderer regardless of the selected engine.
+- Media3 reports dropped video frames and first-frame latency in logcat
+  (tag `Media3WallpaperPlayer`). It also logs repeat-boundary transitions,
+  but that event is not a frame-perfect proof of a gapless loop.
+- A backend selection change releases the previous player and creates the
+  selected one. The app keeps the original video URI and other preferences.
+
+Use the same file and conditions for both engines. Compare dropped frames,
+power use, loop seams, color fidelity, aspect ratio and unlock response.
+Media3 may increase APK size and is not automatically faster than MediaPlayer.
+If the experimental engine behaves worse, select **MediaPlayer** again.
+The existing in-app VideoView preview deliberately remains unchanged; the
+engine selector controls the live wallpaper, not the preview.
+
 ## Wallpaper rendering modes
 
 - **Efficient (Ефективний)** sends **Fill** video directly from Android's

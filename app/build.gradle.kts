@@ -11,7 +11,7 @@ val signingPassword = System.getenv("CI_SIGNING_PASSWORD")
 
 android {
     namespace = "io.github.codeg0blin.videowallpaper"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "io.github.imadraude.videowallpaper"
@@ -47,10 +47,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         viewBinding = true
     }
@@ -58,6 +54,12 @@ android {
        includeInApk = false
        includeInBundle = false
    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 
 dependencies {
@@ -68,6 +70,8 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.0")
     implementation("androidx.cardview:cardview:1.0.0")
     implementation("androidx.preference:preference-ktx:1.2.1")
+    // Stable Media3 implementation, kept opt-in to benchmark against MediaPlayer.
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
 
     testImplementation("junit:junit:4.13.2")
 }

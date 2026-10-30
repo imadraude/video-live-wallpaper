@@ -84,6 +84,7 @@ class MainActivity : AppCompatActivity() {
         setupSpeedControl()
         setupCropControl()
         setupRenderModeControl()
+        setupPlaybackEngineControl()
         restoreSelection()
 
         binding.pickButton.setOnClickListener {
@@ -208,6 +209,29 @@ class MainActivity : AppCompatActivity() {
                 VideoWallpaperService.RENDER_MODE_COMPATIBLE
             }
             prefs.edit().putInt(VideoWallpaperService.PREF_RENDER_MODE, newMode).apply()
+        }
+    }
+
+    // --- Video playback engine (controlled A/B comparison) ---------------
+
+    private fun setupPlaybackEngineControl() {
+        val initial = prefs.getInt(
+            VideoWallpaperService.PREF_PLAYBACK_ENGINE,
+            VideoWallpaperService.DEFAULT_PLAYBACK_ENGINE
+        )
+        binding.playbackEngineToggleGroup.check(
+            if (initial == VideoWallpaperService.PLAYBACK_ENGINE_MEDIA3) {
+                binding.playbackMedia3Button.id
+            } else {
+                binding.playbackSystemButton.id
+            }
+        )
+        binding.playbackEngineToggleGroup.addOnButtonCheckedListener { _, id, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            val engine = if (id == binding.playbackMedia3Button.id) {
+                VideoWallpaperService.PLAYBACK_ENGINE_MEDIA3
+            } else VideoWallpaperService.PLAYBACK_ENGINE_SYSTEM
+            prefs.edit().putInt(VideoWallpaperService.PREF_PLAYBACK_ENGINE, engine).apply()
         }
     }
 
