@@ -244,7 +244,7 @@ class MainActivity : AppCompatActivity() {
                 Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
         } catch (e: SecurityException) {
-            Toast.makeText(this, "Couldn't get permanent access to that file", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.error_file_permission), Toast.LENGTH_LONG).show()
             return
         }
 
