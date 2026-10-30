@@ -264,6 +264,60 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toBottomOf="@id/renderModeToggleGroup" />
 
+    <!-- Choose the playback core independently of video rendering mode. -->
+    <TextView
+        android:id="@+id/playbackEngineLabel"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="7dp"
+        android:text="@string/playback_engine_label"
+        android:textColor="@color/text_primary"
+        android:textSize="12sp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/renderModeHint" />
+
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/playbackEngineToggleGroup"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/playbackEngineLabel"
+        app:singleSelection="true"
+        app:selectionRequired="true">
+
+        <Button
+            android:id="@+id/playbackSystemButton"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:text="@string/playback_engine_system"
+            android:textColor="@color/toggle_text"
+            app:backgroundTint="@color/toggle_bg"
+            android:textSize="12sp"
+            app:strokeColor="@color/accent" />
+
+        <Button
+            android:id="@+id/playbackMedia3Button"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:text="@string/playback_engine_media3"
+            android:textColor="@color/toggle_text"
+            app:backgroundTint="@color/toggle_bg"
+            android:textSize="12sp"
+            app:strokeColor="@color/accent" />
+
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
     <Button
         android:id="@+id/setWallpaperButton"
         android:layout_width="0dp"
@@ -280,6 +334,6 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/renderModeHint" />
+        app:layout_constraintTop_toBottomOf="@id/playbackEngineToggleGroup" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
