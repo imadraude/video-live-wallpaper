@@ -24,6 +24,26 @@ Pull requests run unit tests and produce a short-lived debug artifact.
 Each push to `main` runs tests, builds and verifies a signed release APK,
 then publishes a GitHub Release for Obtainium.
 
+## Wallpaper rendering modes
+
+- **Efficient (Ефективний)** sends video directly from Android's MediaPlayer
+  to the wallpaper Surface. It avoids the app's extra OpenGL rendering pass
+  and requires no EGL renderer thread for regular video. This can lower GPU
+  work, but device-specific video scaling might ignore Fill/Fit on wallpaper
+  surfaces. Select Compatible if crop or aspect ratio looks incorrect.
+- **Compatible (Сумісний)** is the previous OpenGL ES pipeline and retains
+  precise Fill/Fit scaling and rotation behavior. It remains the default for
+  existing installations.
+- GIF wallpapers always use Compatible rendering, even if Efficient is
+  selected, because the custom GIF decoder needs a GPU texture.
+- Switching modes restarts the wallpaper player once. Simple lock/unlock
+  visibility changes do not switch modes. The application never recompresses
+  your source video in either mode.
+
+For meaningful power and smoothness comparisons, try the same 1080p/30 fps
+video in both modes on the same phone. Results depend on the Android device,
+codec, launcher, and wallpaper implementation.
+
 ## Unlock responsiveness (fork)
 
 The wallpaper now caches video dimensions, coalesces rapid frame callbacks
