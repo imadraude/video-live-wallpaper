@@ -57,11 +57,14 @@ codec, launcher, and wallpaper implementation.
 
 ## SDR color fidelity and OpenGL reliability (fork)
 
-The **Compatible** renderer now requests an explicit sRGB EGL window surface
-when `EGL_KHR_gl_colorspace` is supported, and falls back to the previous
-surface configuration if the vendor rejects it. This declares the existing
-standard-dynamic-range output color space; it does **not** convert, re-encode
-or sharpen the original video.
+The **Compatible** renderer uses the default EGL window surface rather
+than forcing an sRGB-encoded framebuffer. The forced sRGB surface introduced
+earlier could apply unwanted gamma encoding to RGB values obtained from a
+video decoder's external OES texture, causing pale, washed-out colors on
+some phones. This change restores the existing video shader's passthrough
+behavior: no saturation filter, gamma curve, transcoding or sharpening.
+Compare the same source in Efficient and Compatible modes on the target
+device to confirm whether this fixes the visible regression.
 
 The video and GIF fragment shaders use high-precision floats where the GPU
 supports them and fall back to medium precision on older OpenGL ES devices.
