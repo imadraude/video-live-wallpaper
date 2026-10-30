@@ -167,8 +167,16 @@ class VideoWallpaperService : WallpaperService() {
             val handler = Handler(thread.looper)
             renderHandler = handler
             handler.post {
+                // Surface teardown can outrun asynchronous EGL initialization.
+                // Never create a renderer for an already destroyed wallpaper.
+                if (currentHolder !== holder || renderHandler !== handler) return@post
                 val r = VideoFrameRenderer()
-                if (r.start(holder.surface)) {
+                val started = r.start(holder.surface)
+                if (currentHolder !== holder || renderHandler !== handler) {
+                    r.release()
+                    return@post
+                }
+                if (started) {
                     renderer = r
                     applyScalingModePref()
                     // Draw exactly when a new frame arrives, rather than
