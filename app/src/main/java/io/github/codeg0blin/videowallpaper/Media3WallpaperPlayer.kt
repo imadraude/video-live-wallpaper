@@ -15,7 +15,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 
 /**
- * Experimental playback backend for an existing WallpaperService Engine.
+ * Media3 playback backend for an existing WallpaperService Engine.
  *
  * Android's hardware codec still decodes the video. This class only owns the
  * Media3 player and its output Surface; it never owns EGL or the wallpaper's
