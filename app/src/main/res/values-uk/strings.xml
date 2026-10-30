@@ -21,5 +21,8 @@
     <string name="render_mode_hint">«Ефективний» виводить відео напряму в режимі «Заповнити». Для «Умістити» автоматично використовується сумісний рендерер, щоб зберегти пропорції та додати чорні рамки. Для GIF — теж.</string>
     <string name="gif_preview_description">Попередній перегляд вибраного GIF</string>
     <string name="error_gif_unusable">Не вдалося відкрити GIF. Можливо, файл пошкоджено або він завеликий.</string>
+    <string name="playback_engine_label">Рушій відтворення відео (порівняння)</string>
+    <string name="playback_engine_system">MediaPlayer</string>
+    <string name="playback_engine_media3">Media3 ExoPlayer</string>
     <string name="version_format">v%1$s</string>
 </resources>
