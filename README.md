@@ -1,29 +1,26 @@
-> **imadraude fork:** Unlock-performance improvements and GitHub Actions signed APK
-> releases for [Obtainium](https://github.com/ImranR98/Obtainium). The fork uses the
-> separate Android package ID `io.github.imadraude.videowallpaper` to avoid
-> conflicting with the F-Droid version; install it side-by-side, then select it
-> as your live wallpaper again.
+> **imadraude fork:** unlock-performance fixes and automated test APK
+> releases for [Obtainium](https://github.com/ImranR98/Obtainium).
+> The fork uses a separate package ID, `io.github.imadraude.videowallpaper`.
 
-## Obtainium (fork)
+## Obtainium (test builds without signing secrets)
 
-1. In Obtainium, add `https://github.com/imadraude/video-live-wallpaper` as a GitHub app.
-2. Install the latest signed APK from the repository's **Releases** (not the
-   short-lived debug artifact in Actions).
-3. Subsequent pushes to `main` automatically publish new signed GitHub releases
-   with increasing Android `versionCode` values, so Obtainium finds updates.
+1. Add `https://github.com/imadraude/video-live-wallpaper` to Obtainium as a GitHub source.
+2. Download the latest `-debug.apk` asset from the [Releases](https://github.com/imadraude/video-live-wallpaper/releases) page.
+3. The GitHub workflow runs tests, creates a debug-signed installable APK, and publishes a release on every push to `main`. No manual keystore or GitHub secrets are needed.
 
-**Maintainer setup (required once):** create repository Actions secrets
-`RELEASE_KEYSTORE_BASE64` (the base64-encoded PKCS12 signing keystore) and
-`RELEASE_SIGNING_PASSWORD` (the keystore/key password). The key alias must be
-`video-wallpaper`. Do **not** commit the keystore or signing password.
-Back up the keystore and password permanently: changing the signing key later
-would break in-place Android upgrades.
+**Temporary limitation:** Android Studio / Gradle automatically generates a **different
+debug signing key on each new GitHub Actions runner**. Obtainium can see and download new
+releases, but Android will **normally refuse an in-place upgrade** because the
+signatures are different. Uninstall the previous fork test build before installing
+the next one. This removes its locally saved video selection. The original F-Droid
+app is a separate package and can remain installed.
 
-On pull requests, Actions runs unit tests and builds a temporary debug APK.
-On pushes to `main`, it additionally signs a release APK, verifies its
-signature and publishes it to GitHub Releases for Obtainium. Without the
-signing secrets, release publishing intentionally fails rather than publishing
-an unsigned or unpredictably signed APK.
+Once we want reliable one-tap upgrades, we must preserve a private, stable
+signing key between builds. We are intentionally not publishing/storing one
+in this repository for now.
+
+On pull requests, Actions builds/tests and uploads a temporary APK artifact.
+On pushes to `main`, it also publishes the debug APK to GitHub Releases.
 
 ## Unlock responsiveness (fork)
 
