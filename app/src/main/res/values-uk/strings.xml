@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Відеошпалери (imadraude)</string>
+    <string name="app_name">Відеошпалери</string>
     <string name="wallpaper_description">Відтворює вибране відео або GIF як живі шпалери</string>
     <string name="title">Живі відеошпалери</string>
     <string name="subtitle">Виберіть відео або GIF і встановіть його як шпалери. Живі шпалери можуть відображатися на головному екрані та екрані блокування.</string>
