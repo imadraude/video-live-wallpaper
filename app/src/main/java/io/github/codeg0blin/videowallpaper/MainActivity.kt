@@ -212,7 +212,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- Video playback engine (controlled A/B comparison) ---------------
+    // --- Video playback engine --------------------------------------------
 
     private fun setupPlaybackEngineControl() {
         val initial = prefs.getInt(

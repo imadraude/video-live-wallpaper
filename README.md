@@ -35,14 +35,14 @@ Pull requests run unit tests and produce a short-lived debug artifact.
 Each push to `main` runs tests, builds and verifies a signed release APK,
 then publishes a GitHub Release for Obtainium.
 
-## Experimental Media3 playback engine (fork)
+## Playback engines
 
-The **Playback engine** switch allows an A/B comparison on the same device,
-file, playback speed, wallpaper Surface, and rendering mode:
+The **Playback engine** setting lets you select which video player powers
+live wallpapers:
 
 - **MediaPlayer** is the original default. Existing installations retain
   their behavior unless the user explicitly selects Media3.
-- **Media3 ExoPlayer** uses stable AndroidX Media3 1.11.1 with hardware
+- **Media3** uses AndroidX Media3 1.11.1 with hardware
   codec output, repeat-one playback, no selected audio track, and a direct
   wallpaper Surface for Efficient Fill or the existing OpenGL SurfaceTexture
   pipeline for Compatible/Fit.
@@ -52,15 +52,14 @@ file, playback speed, wallpaper Surface, and rendering mode:
 - Media3 reports dropped video frames and first-frame latency in logcat
   (tag `Media3WallpaperPlayer`). It also logs repeat-boundary transitions,
   but that event is not a frame-perfect proof of a gapless loop.
-- A backend selection change releases the previous player and creates the
+- Changing the playback engine releases the previous player and starts the
   selected one. The app keeps the original video URI and other preferences.
 
-Use the same file and conditions for both engines. Compare dropped frames,
-power use, loop seams, color fidelity, aspect ratio and unlock response.
-Media3 may increase APK size and is not automatically faster than MediaPlayer.
-If the experimental engine behaves worse, select **MediaPlayer** again.
-The existing in-app VideoView preview deliberately remains unchanged; the
-engine selector controls the live wallpaper, not the preview.
+Both engines use hardware decoding where supported. Performance and battery
+usage depend on the device and video format. You can switch engines without
+reselecting the video.
+The in-app VideoView preview is unchanged; the engine setting controls the
+live wallpaper, not the preview.
 
 ## Wallpaper rendering modes
 
