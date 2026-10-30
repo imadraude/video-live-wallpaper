@@ -410,6 +410,17 @@ class MainActivity : AppCompatActivity() {
             mp.isLooping = true
             mp.setVolume(0f, 0f)
             previewPlayer = mp
+            // Preflight the actual video dimensions once in the already
+            // prepared preview. The wallpaper can then safely use direct
+            // output only if its own Surface has matching proportions.
+            // Key by URI to avoid ever applying dimensions from a prior file.
+            if (selectedVideoUri == uri && mp.videoWidth > 0 && mp.videoHeight > 0) {
+                prefs.edit()
+                    .putString(VideoWallpaperService.PREF_SOURCE_ASPECT_URI, uri.toString())
+                    .putInt(VideoWallpaperService.PREF_SOURCE_ASPECT_WIDTH, mp.videoWidth)
+                    .putInt(VideoWallpaperService.PREF_SOURCE_ASPECT_HEIGHT, mp.videoHeight)
+                    .apply()
+            }
             applyCropToVideoPreview()
             binding.previewVideo.start()
             applySpeedToPreview(currentSpeed)
