@@ -18,7 +18,7 @@
     <string name="render_mode_label">Wallpaper rendering mode</string>
     <string name="render_mode_efficient">Efficient</string>
     <string name="render_mode_compatible">Compatible</string>
-    <string name="render_mode_hint">Fit and GIF use Compatible rendering automatically.</string>
+    <string name="render_mode_hint">Efficient uses direct output when proportions match. Other videos are automatically cropped or fitted without stretching.</string>
     <string name="gif_preview_description">Preview of the selected GIF</string>
     <string name="error_gif_unusable">That GIF couldn\'t be loaded. It may be damaged or too large.</string>
     <string name="playback_engine_label">Playback engine</string>
