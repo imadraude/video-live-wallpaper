@@ -160,10 +160,15 @@ class VideoFrameRenderer {
             return false
         }
 
-        // Explicitly mark ordinary SDR frames as sRGB on devices that
-        // advertise EGL_KHR_gl_colorspace. Do not request Display P3 or HDR
-        // here: decoded SDR texels are NOT transformed into those spaces.
-        eglSurface = createSdrSurface(config, surface)
+        // Video frames decoded into GL_TEXTURE_EXTERNAL_OES already contain
+        // display-encoded RGB values after the codec/driver's YUV conversion.
+        // An explicitly sRGB-encoded EGL framebuffer may encode those values
+        // *again*, lifting midtones and washing out colors on some devices.
+        // Retain their values in the default EGL window surface instead.
+        // This is a conservative SDR passthrough, NOT an HDR/P3 solution.
+        eglSurface = EGL14.eglCreateWindowSurface(
+            eglDisplay, config, surface, intArrayOf(EGL14.EGL_NONE), 0
+        )
         if (eglSurface == EGL14.EGL_NO_SURFACE) {
             Log.e(TAG, "eglCreateWindowSurface failed")
             releaseInternal()
@@ -190,34 +195,6 @@ class VideoFrameRenderer {
 
         Log.i(TAG, "EGL initialized OK (EGL version ${version[0]}.${version[1]})")
         return true
-    }
-
-    /**
-     * Creates a correctly tagged SDR output surface where supported. If an
-     * OEM driver rejects the sRGB colorspace attribute, keep the legacy
-     * surface rather than dropping the wallpaper entirely.
-     *
-     * This is deliberately NOT HDR/10-bit/P3: that requires video metadata,
-     * a suitable surface buffer format and a verified color transform.
-     */
-    private fun createSdrSurface(config: EGLConfig, surface: Surface): EGLSurface {
-        val extensions = EGL14.eglQueryString(eglDisplay, EGL14.EGL_EXTENSIONS).orEmpty()
-        if (extensions.split(' ').contains("EGL_KHR_gl_colorspace")) {
-            val sRgbAttributes = intArrayOf(
-                EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_SRGB_KHR, EGL14.EGL_NONE
-            )
-            val sRgbSurface = EGL14.eglCreateWindowSurface(
-                eglDisplay, config, surface, sRgbAttributes, 0
-            )
-            if (sRgbSurface != EGL14.EGL_NO_SURFACE) {
-                Log.i(TAG, "Color-managed SDR output: EGL sRGB")
-                return sRgbSurface
-            }
-            Log.w(TAG, "Explicit sRGB output unsupported by wallpaper surface; using legacy EGL")
-        }
-        return EGL14.eglCreateWindowSurface(
-            eglDisplay, config, surface, intArrayOf(EGL14.EGL_NONE), 0
-        )
     }
 
     /**
@@ -806,10 +783,6 @@ class VideoFrameRenderer {
 
     companion object {
         private const val TAG = "VideoFrameRenderer"
-
-        // EGL_KHR_gl_colorspace constants (not exported by every Android SDK).
-        private const val EGL_GL_COLORSPACE_KHR = 0x309D
-        private const val EGL_GL_COLORSPACE_SRGB_KHR = 0x3089
 
         // 4 floats per vertex (x, y, u, v), 4 bytes per float.
         private const val STRIDE_BYTES = 4 * 4
