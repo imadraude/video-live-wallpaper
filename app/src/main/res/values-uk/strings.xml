@@ -1,7 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">Відеошпалери (imadraude)</string>
+    <string name="wallpaper_description">Відтворює вибране відео або GIF як живі шпалери</string>
+    <string name="title">Живі відеошпалери</string>
+    <string name="subtitle">Виберіть відео або GIF і встановіть його як шпалери. Живі шпалери можуть відображатися на головному екрані та екрані блокування.</string>
+    <string name="pick_video">Вибрати відео або GIF</string>
+    <string name="no_video_selected">Відео або GIF не вибрано</string>
+    <string name="set_wallpaper">Встановити як шпалери</string>
+    <string name="select_video_first">Спочатку виберіть відео або GIF</string>
+    <string name="error_live_wallpaper_unavailable">Цей пристрій не підтримує живі шпалери</string>
+    <string name="error_file_permission">Не вдалося отримати постійний доступ до файлу</string>
+    <string name="speed_label">Швидкість відтворення</string>
+    <string name="speed_default_display">1,0×</string>
+    <string name="crop_label">Масштабування</string>
+    <string name="crop_fill">Заповнити (обрізати краї)</string>
+    <string name="crop_fit">Умістити (показати повністю)</string>
     <string name="render_mode_label">Режим відтворення шпалер</string>
     <string name="render_mode_efficient">Ефективний</string>
     <string name="render_mode_compatible">Сумісний</string>
-    <string name="render_mode_hint">Ефективний виводить відео напряму. Масштабування може залежати від телефона. GIF завжди використовують сумісний режим.</string>
+    <string name="render_mode_hint">«Ефективний» виводить відео напряму, але масштабування залежить від пристрою. Для GIF завжди використовується «Сумісний».</string>
+    <string name="gif_preview_description">Попередній перегляд вибраного GIF</string>
+    <string name="error_gif_unusable">Не вдалося відкрити GIF. Можливо, файл пошкоджено або він завеликий.</string>
+    <string name="version_format">v%1$s</string>
 </resources>
