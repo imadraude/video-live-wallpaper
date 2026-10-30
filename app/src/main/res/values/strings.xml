@@ -10,6 +10,7 @@
     <string name="select_video_first">Please choose a video or GIF first</string>
     <string name="error_live_wallpaper_unavailable">Live wallpapers aren\'t supported on this device</string>
     <string name="error_file_permission">Could not obtain permanent access to that file</string>
+    <string name="error_file_permission">Could not obtain permanent access to that file</string>
     <string name="speed_label">Playback speed</string>
     <string name="speed_default_display">1.0x</string>
     <string name="crop_label">Crop mode</string>
