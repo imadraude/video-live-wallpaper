@@ -45,7 +45,7 @@ class VideoWallpaperService : WallpaperService() {
     inner class VideoEngine : Engine(), SharedPreferences.OnSharedPreferenceChangeListener {
 
         private var mediaPlayer: MediaPlayer? = null
-        // Experimental Media3 backend: never active concurrently with
+        // Media3 backend: never active concurrently with
         // MediaPlayer, and uses the same EGL/native output selection.
         private var media3Player: Media3WallpaperPlayer? = null
         private var media3AwaitingSurface = false
