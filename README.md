@@ -42,6 +42,8 @@ then publishes a GitHub Release for Obtainium.
   Some devices ignore native scaling on wallpaper surfaces. With **Fit**
   selected, Efficient automatically uses the OpenGL renderer so the complete
   video is visible without stretching, with black letterbox/pillarbox bars.
+  The renderer accounts for quarter-turn (90/270 degree) video texture
+  orientation when calculating the displayed aspect ratio.
   Switching Fill/Fit while Efficient is selected reconfigures the pipeline.
 - **Compatible (Сумісний)** uses the OpenGL ES pipeline for both Fill and Fit
   with aspect-correct cropping and letterboxing. It remains the default for
