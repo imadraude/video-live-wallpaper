@@ -232,7 +232,7 @@ class VideoWallpaperService : WallpaperService() {
         private fun attachOrPreparePlayer(holder: SurfaceHolder) {
             playbackHandler.removeCallbacks(releaseDetachedPlayerRunnable)
             val retained = mediaPlayer
-            if (retained != null && playerPrepared && !isSelectedGif()) {
+            if (retained != null && PlaybackReusePolicy.canReuseVideoDecoder(playerPrepared, isSelectedGif())) {
                 try {
                     val surface = renderer?.getVideoInputSurface() ?: holder.surface
                     retained.setSurface(surface)
@@ -345,7 +345,7 @@ class VideoWallpaperService : WallpaperService() {
          */
         private fun detachOrReleasePlayer() {
             val player = mediaPlayer
-            if (player == null || !playerPrepared || isSelectedGif()) {
+            if (player == null || !PlaybackReusePolicy.canReuseVideoDecoder(playerPrepared, isSelectedGif())) {
                 releasePlayer()
                 return
             }
