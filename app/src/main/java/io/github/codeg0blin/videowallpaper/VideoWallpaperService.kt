@@ -483,6 +483,8 @@ class VideoWallpaperService : WallpaperService() {
 
         private fun preparePlayer(holder: SurfaceHolder) {
             releasePlayer()
+            val prepareStartedAtMs = SystemClock.elapsedRealtime()
+            Log.i(TAG, "Cold video prepare started (engine=${System.identityHashCode(this)})")
 
             val uriString = prefs?.getString(PREF_VIDEO_URI, null)
             if (uriString.isNullOrBlank()) return
@@ -547,6 +549,8 @@ class VideoWallpaperService : WallpaperService() {
                 player.setOnPreparedListener {
                     if (it !== mediaPlayer) return@setOnPreparedListener
                     playerPrepared = true
+                    Log.i(TAG, "Cold video prepared in " +
+                        "${SystemClock.elapsedRealtime() - prepareStartedAtMs}ms")
                     videoWidth = it.videoWidth
                     videoHeight = it.videoHeight
                     consecutiveErrorRetries = 0
@@ -554,6 +558,17 @@ class VideoWallpaperService : WallpaperService() {
                     val latestSpeed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
                     applySpeed(it, latestSpeed)
                     startDrawLoopIfVisible()
+                }
+                player.setOnInfoListener { infoPlayer, what, _ ->
+                    if (infoPlayer === mediaPlayer &&
+                        what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START
+                    ) {
+                        val elapsedMs = if (lastBecameVisibleAtMs > 0L) {
+                            SystemClock.elapsedRealtime() - lastBecameVisibleAtMs
+                        } else -1L
+                        Log.i(TAG, "Native first frame after visibility: ${elapsedMs}ms")
+                    }
+                    false
                 }
                 player.setOnErrorListener { errorPlayer, what, extra ->
                     if (errorPlayer !== mediaPlayer) return@setOnErrorListener true
