@@ -2,6 +2,17 @@
 > releases for [Obtainium](https://github.com/ImranR98/Obtainium).
 > The fork uses the separate Android package ID `io.github.imadraude.videowallpaper`.
 
+## Languages (fork)
+
+The entire in-app interface, wallpaper label, descriptions and user-facing
+error messages are available in **Ukrainian** and **English**. The app follows
+the Android system language by default. On Android 13+ you can also select a
+language specifically for this app in Android's **App languages** settings.
+English remains the fallback for other system languages.
+
+The APK build checks that both language files contain the same complete set
+of translation keys, preventing new UI strings from being left untranslated.
+
 ## Install and update through Obtainium
 
 1. In Obtainium add `https://github.com/imadraude/video-live-wallpaper` as a GitHub source.

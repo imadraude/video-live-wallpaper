@@ -39,6 +39,9 @@ jobs:
       - name: Install Android SDK platform
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
+      - name: Check Ukrainian and English translations
+        run: python3 scripts/check_translations.py
+
       - name: Run tests and assemble debug APK
         run: |
           chmod +x ./gradlew
