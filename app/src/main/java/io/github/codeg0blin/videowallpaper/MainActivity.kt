@@ -83,6 +83,7 @@ class MainActivity : AppCompatActivity() {
 
         setupSpeedControl()
         setupCropControl()
+        setupRenderModeControl()
         restoreSelection()
 
         binding.pickButton.setOnClickListener {
@@ -184,6 +185,32 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // --- Video rendering mode -------------------------------------------
+
+    private fun setupRenderModeControl() {
+        val saved = prefs.getInt(
+            VideoWallpaperService.PREF_RENDER_MODE,
+            VideoWallpaperService.DEFAULT_RENDER_MODE
+        )
+        binding.renderModeToggleGroup.check(
+            if (saved == VideoWallpaperService.RENDER_MODE_EFFICIENT) {
+                binding.renderEfficientButton.id
+            } else {
+                binding.renderCompatibleButton.id
+            }
+        )
+
+        binding.renderModeToggleGroup.addOnButtonCheckedListener { _, checkedId, checked ->
+            if (!checked) return@addOnButtonCheckedListener
+            val newMode = if (checkedId == binding.renderEfficientButton.id) {
+                VideoWallpaperService.RENDER_MODE_EFFICIENT
+            } else {
+                VideoWallpaperService.RENDER_MODE_COMPATIBLE
+            }
+            prefs.edit().putInt(VideoWallpaperService.PREF_RENDER_MODE, newMode).apply()
+        }
+    }
+
     // --- Video selection -------------------------------------------------
 
     private fun restoreSelection() {
@@ -229,7 +256,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         selectedVideoUri = uri
-        prefs.edit().putString(VideoWallpaperService.Companion.PREF_VIDEO_URI, uri.toString()).apply()
+        prefs.edit()
+            .putBoolean(VideoWallpaperService.PREF_SOURCE_IS_GIF, false)
+            .putString(VideoWallpaperService.Companion.PREF_VIDEO_URI, uri.toString())
+            .apply()
         showPreview(uri)
     }
 
@@ -316,7 +346,10 @@ class MainActivity : AppCompatActivity() {
 
             selectedVideoUri = uri
             if (persistSelection) {
-                prefs.edit().putString(VideoWallpaperService.Companion.PREF_VIDEO_URI, uri.toString()).apply()
+                prefs.edit()
+                    .putBoolean(VideoWallpaperService.PREF_SOURCE_IS_GIF, true)
+                    .putString(VideoWallpaperService.Companion.PREF_VIDEO_URI, uri.toString())
+                    .apply()
             }
             showingGif = true
 

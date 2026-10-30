@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="render_mode_label">Режим відтворення шпалер</string>
+    <string name="render_mode_efficient">Ефективний</string>
+    <string name="render_mode_compatible">Сумісний</string>
+    <string name="render_mode_hint">Ефективний виводить відео напряму. Масштабування може залежати від телефона. GIF завжди використовують сумісний режим.</string>
+</resources>

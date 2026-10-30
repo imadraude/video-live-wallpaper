@@ -269,9 +269,11 @@ class VideoFrameRenderer {
         if (shaderProgram == 0) return
 
         if (frameAvailable) {
+            // Clear *before* consuming the frame: clearing afterwards could
+            // discard a new onFrameAvailable callback that races with GL.
+            frameAvailable = false
             texture.updateTexImage()
             texture.getTransformMatrix(texMatrix)
-            frameAvailable = false
         }
 
         if (videoWidth != lastVideoWidth || videoHeight != lastVideoHeight ||
