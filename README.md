@@ -1,3 +1,40 @@
+> **imadraude fork:** Unlock-performance improvements and GitHub Actions signed APK
+> releases for [Obtainium](https://github.com/ImranR98/Obtainium). The fork uses the
+> separate Android package ID `io.github.imadraude.videowallpaper` to avoid
+> conflicting with the F-Droid version; install it side-by-side, then select it
+> as your live wallpaper again.
+
+## Obtainium (fork)
+
+1. In Obtainium, add `https://github.com/imadraude/video-live-wallpaper` as a GitHub app.
+2. Install the latest signed APK from the repository's **Releases** (not the
+   short-lived debug artifact in Actions).
+3. Subsequent pushes to `main` automatically publish new signed GitHub releases
+   with increasing Android `versionCode` values, so Obtainium finds updates.
+
+**Maintainer setup (required once):** create repository Actions secrets
+`RELEASE_KEYSTORE_BASE64` (the base64-encoded PKCS12 signing keystore) and
+`RELEASE_SIGNING_PASSWORD` (the keystore/key password). The key alias must be
+`video-wallpaper`. Do **not** commit the keystore or signing password.
+Back up the keystore and password permanently: changing the signing key later
+would break in-place Android upgrades.
+
+On pull requests, Actions runs unit tests and builds a temporary debug APK.
+On pushes to `main`, it additionally signs a release APK, verifies its
+signature and publishes it to GitHub Releases for Obtainium. Without the
+signing secrets, release publishing intentionally fails rather than publishing
+an unsigned or unpredictably signed APK.
+
+## Unlock responsiveness (fork)
+
+The wallpaper now caches video dimensions, coalesces rapid frame callbacks
+instead of accumulating GL work, and defers pausing the video decoder for
+300 ms when visibility is briefly lost during lock/unlock animations.
+The decoder still pauses when the wallpaper stays hidden. This is a targeted
+first fix, not a guarantee against system/OEM delays during surface recreation.
+
+---
+
 # Video Live Wallpaper
 
 A small Android app that lets you pick any video or animated GIF from your device and set it as a looping live wallpaper.
