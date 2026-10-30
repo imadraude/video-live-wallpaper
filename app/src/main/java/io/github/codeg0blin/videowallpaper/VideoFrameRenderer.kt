@@ -10,6 +10,8 @@ import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.opengl.GLUtils
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Surface
 
@@ -33,6 +35,7 @@ class VideoFrameRenderer {
     private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
     private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
     private var eglConfig: EGLConfig? = null
+    private var swapFailureReported = false
 
     // Chunk 2: the texture MediaPlayer decodes video frames into, and the
     // Surface wrapper around it that gets passed to MediaPlayer.setSurface().
@@ -102,6 +105,7 @@ class VideoFrameRenderer {
     // thread.
     @Volatile
     private var frameAvailable: Boolean = false
+    private var hasDecodedVideoFrame = false
 
     /**
      * Optional external hook called whenever a new frame arrives (same
@@ -156,10 +160,10 @@ class VideoFrameRenderer {
             return false
         }
 
-        val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
-        eglSurface = EGL14.eglCreateWindowSurface(
-            eglDisplay, config, surface, surfaceAttribs, 0
-        )
+        // Explicitly mark ordinary SDR frames as sRGB on devices that
+        // advertise EGL_KHR_gl_colorspace. Do not request Display P3 or HDR
+        // here: decoded SDR texels are NOT transformed into those spaces.
+        eglSurface = createSdrSurface(config, surface)
         if (eglSurface == EGL14.EGL_NO_SURFACE) {
             Log.e(TAG, "eglCreateWindowSurface failed")
             releaseInternal()
@@ -186,6 +190,34 @@ class VideoFrameRenderer {
 
         Log.i(TAG, "EGL initialized OK (EGL version ${version[0]}.${version[1]})")
         return true
+    }
+
+    /**
+     * Creates a correctly tagged SDR output surface where supported. If an
+     * OEM driver rejects the sRGB colorspace attribute, keep the legacy
+     * surface rather than dropping the wallpaper entirely.
+     *
+     * This is deliberately NOT HDR/10-bit/P3: that requires video metadata,
+     * a suitable surface buffer format and a verified color transform.
+     */
+    private fun createSdrSurface(config: EGLConfig, surface: Surface): EGLSurface {
+        val extensions = EGL14.eglQueryString(eglDisplay, EGL14.EGL_EXTENSIONS).orEmpty()
+        if (extensions.split(' ').contains("EGL_KHR_gl_colorspace")) {
+            val sRgbAttributes = intArrayOf(
+                EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_SRGB_KHR, EGL14.EGL_NONE
+            )
+            val sRgbSurface = EGL14.eglCreateWindowSurface(
+                eglDisplay, config, surface, sRgbAttributes, 0
+            )
+            if (sRgbSurface != EGL14.EGL_NO_SURFACE) {
+                Log.i(TAG, "Color-managed SDR output: EGL sRGB")
+                return sRgbSurface
+            }
+            Log.w(TAG, "Explicit sRGB output unsupported by wallpaper surface; using legacy EGL")
+        }
+        return EGL14.eglCreateWindowSurface(
+            eglDisplay, config, surface, intArrayOf(EGL14.EGL_NONE), 0
+        )
     }
 
     /**
@@ -220,19 +252,18 @@ class VideoFrameRenderer {
         )
 
         val surfaceTexture = SurfaceTexture(videoTextureId)
-        surfaceTexture.setOnFrameAvailableListener {
-            // Runs on an arbitrary thread per the SurfaceTexture docs, so
-            // no GL calls here — just flag internally and notify any
-            // external listener (e.g. so a caller can schedule a draw
-            // exactly when needed instead of polling on a fixed timer).
-            // No logging here deliberately — this fires every single
-            // frame for as long as the wallpaper is visible, so a log
-            // line here was pure diagnostic overhead (disk/logcat writes
-            // dozens of times a second, forever) useful only while
-            // confirming the pipeline worked during development.
-            frameAvailable = true
-            onFrameAvailableListener?.invoke()
-        }
+        // Always deliver callbacks to the EGL owner's Looper. The old
+        // no-Handler overload can call back on an unrelated thread, creating
+        // subtle races with updateTexImage() and surface teardown.
+        val renderLooper = Looper.myLooper()
+            ?: throw IllegalStateException("Video renderer requires a HandlerThread")
+        surfaceTexture.setOnFrameAvailableListener(
+            SurfaceTexture.OnFrameAvailableListener {
+                frameAvailable = true
+                onFrameAvailableListener?.invoke()
+            },
+            Handler(renderLooper)
+        )
         videoSurfaceTexture = surfaceTexture
         videoSurface = Surface(surfaceTexture)
         return true
@@ -265,6 +296,7 @@ class VideoFrameRenderer {
      * context, with that context current.
      */
     fun drawFrame(viewportWidth: Int, viewportHeight: Int, videoWidth: Int, videoHeight: Int) {
+        if (viewportWidth <= 0 || viewportHeight <= 0) return
         val texture = videoSurfaceTexture ?: return
         if (shaderProgram == 0) return
 
@@ -274,7 +306,11 @@ class VideoFrameRenderer {
             frameAvailable = false
             texture.updateTexImage()
             texture.getTransformMatrix(texMatrix)
+            hasDecodedVideoFrame = true
         }
+        // Avoid submitting an uninitialized (often black) external texture
+        // while waiting for the first decoded frame after unlock.
+        if (!hasDecodedVideoFrame) return
 
         if (videoWidth != lastVideoWidth || videoHeight != lastVideoHeight ||
             viewportWidth != lastViewportWidth || viewportHeight != lastViewportHeight ||
@@ -289,8 +325,13 @@ class VideoFrameRenderer {
         }
 
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
-        GLES20.glClearColor(0f, 0f, 0f, 1f)
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        // FILL draws an opaque full-screen quad, so clearing the entire
+        // framebuffer every video frame just burns GPU bandwidth.
+        // FIT needs black bars around the reduced quad.
+        if (scalingMode == ScalingMode.FIT) {
+            GLES20.glClearColor(0f, 0f, 0f, 1f)
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        }
 
         GLES20.glUseProgram(shaderProgram)
         GLES20.glUniformMatrix4fv(texMatrixHandle, 1, false, texMatrix, 0)
@@ -317,7 +358,7 @@ class VideoFrameRenderer {
         GLES20.glDisableVertexAttribArray(positionHandle)
         GLES20.glDisableVertexAttribArray(texCoordHandle)
 
-        EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+        presentFrame()
     }
 
     /**
@@ -576,8 +617,13 @@ class VideoFrameRenderer {
         }
 
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
-        GLES20.glClearColor(0f, 0f, 0f, 1f)
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        // FILL draws an opaque full-screen quad, so clearing the entire
+        // framebuffer every video frame just burns GPU bandwidth.
+        // FIT needs black bars around the reduced quad.
+        if (scalingMode == ScalingMode.FIT) {
+            GLES20.glClearColor(0f, 0f, 0f, 1f)
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        }
 
         GLES20.glUseProgram(gifProgram)
 
@@ -603,7 +649,7 @@ class VideoFrameRenderer {
         GLES20.glDisableVertexAttribArray(gifPositionHandle)
         GLES20.glDisableVertexAttribArray(gifTexCoordHandle)
 
-        EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+        presentFrame()
     }
 
     /**
@@ -652,6 +698,20 @@ class VideoFrameRenderer {
         return true
     }
 
+    /**
+     * Report a lost EGL output surface once instead of silently calling
+     * eglSwapBuffers forever and flooding logcat during unlock.
+     */
+    private fun presentFrame() {
+        if (eglDisplay == EGL14.EGL_NO_DISPLAY ||
+            eglSurface == EGL14.EGL_NO_SURFACE) return
+        if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface) && !swapFailureReported) {
+            swapFailureReported = true
+            Log.e(TAG, "eglSwapBuffers failed: EGL error 0x" +
+                Integer.toHexString(EGL14.eglGetError()))
+        }
+    }
+
     /** Frees the GIF texture and staging bitmap (context must be current). */
     private fun releaseGifTexture() {
         if (gifTextureId != 0) {
@@ -676,6 +736,10 @@ class VideoFrameRenderer {
     }
 
     private fun releaseInternal() {
+        onFrameAvailableListener = null
+        videoSurfaceTexture?.setOnFrameAvailableListener(null)
+        frameAvailable = false
+        hasDecodedVideoFrame = false
         videoSurface?.release()
         videoSurface = null
         videoSurfaceTexture?.release()
@@ -719,6 +783,7 @@ class VideoFrameRenderer {
         eglContext = EGL14.EGL_NO_CONTEXT
         eglSurface = EGL14.EGL_NO_SURFACE
         eglConfig = null
+        swapFailureReported = false
     }
 
     private fun chooseConfig(): EGLConfig? {
@@ -741,6 +806,10 @@ class VideoFrameRenderer {
 
     companion object {
         private const val TAG = "VideoFrameRenderer"
+
+        // EGL_KHR_gl_colorspace constants (not exported by every Android SDK).
+        private const val EGL_GL_COLORSPACE_KHR = 0x309D
+        private const val EGL_GL_COLORSPACE_SRGB_KHR = 0x3089
 
         // 4 floats per vertex (x, y, u, v), 4 bytes per float.
         private const val STRIDE_BYTES = 4 * 4
@@ -780,7 +849,11 @@ class VideoFrameRenderer {
         // black: transparent pixels were already stored as rgb 0, and a
         // translucent window surface could otherwise show through.
         private const val GIF_FRAGMENT_SHADER_SRC = """
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+            precision highp float;
+            #else
             precision mediump float;
+            #endif
             varying vec2 vTexCoord;
             uniform sampler2D uTexture;
             void main() {
@@ -790,11 +863,16 @@ class VideoFrameRenderer {
 
         private const val FRAGMENT_SHADER_SRC = """
             #extension GL_OES_EGL_image_external : require
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+            precision highp float;
+            #else
             precision mediump float;
+            #endif
             varying vec2 vTexCoord;
             uniform samplerExternalOES uTexture;
             void main() {
-                gl_FragColor = texture2D(uTexture, vTexCoord);
+                // Wallpaper buffers are fully opaque.
+                gl_FragColor = vec4(texture2D(uTexture, vTexCoord).rgb, 1.0);
             }
         """
     }

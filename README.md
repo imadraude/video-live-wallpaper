@@ -44,6 +44,29 @@ For meaningful power and smoothness comparisons, try the same 1080p/30 fps
 video in both modes on the same phone. Results depend on the Android device,
 codec, launcher, and wallpaper implementation.
 
+## SDR color fidelity and OpenGL reliability (fork)
+
+The **Compatible** renderer now requests an explicit sRGB EGL window surface
+when `EGL_KHR_gl_colorspace` is supported, and falls back to the previous
+surface configuration if the vendor rejects it. This declares the existing
+standard-dynamic-range output color space; it does **not** convert, re-encode
+or sharpen the original video.
+
+The video and GIF fragment shaders use high-precision floats where the GPU
+supports them and fall back to medium precision on older OpenGL ES devices.
+Frame callbacks are delivered on the EGL rendering thread, previously
+queued renderer initialization is cancelled safely after surface destruction,
+the app skips presenting uninitialized video textures, and opaque Fill frames
+avoid redundant full-screen clears. Lost EGL swaps are logged once.
+
+**Important color limitation:** Display P3, BT.2020, HDR10, HLG and 10-bit
+output are **not** implemented in the custom OpenGL pipeline. Correct HDR
+rendering needs source color metadata, precision-preserving decode, supported
+window formats and tone/gamut mapping. Simply tagging an SDR texture as P3
+or HDR would make colors *less* accurate. If an HDR source is used, test
+the native **Efficient** mode first; actual color handling is device-specific
+and still needs validation against native playback.
+
 ## Unlock responsiveness (fork)
 
 The wallpaper now caches video dimensions, coalesces rapid frame callbacks
