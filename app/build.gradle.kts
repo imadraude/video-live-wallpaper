@@ -3,20 +3,40 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Each GitHub Actions run gets a monotonically increasing versionCode so
+// Obtainium recognizes newer releases without a manual version bump.
+val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+val signingKeyPath = System.getenv("CI_SIGNING_KEYSTORE")
+val signingPassword = System.getenv("CI_SIGNING_PASSWORD")
+
 android {
     namespace = "io.github.codeg0blin.videowallpaper"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "io.github.codeg0blin.videowallpaper"
+        applicationId = "io.github.imadraude.videowallpaper"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.3.0"
+        versionCode = ciRunNumber?.let { 10000 + it } ?: 10001
+        versionName = ciRunNumber?.let { "1.3.1.$it" } ?: "1.3.1"
+    }
+
+    signingConfigs {
+        if (!signingKeyPath.isNullOrBlank() && !signingPassword.isNullOrBlank()) {
+            create("ciRelease") {
+                storeFile = file(signingKeyPath)
+                storePassword = signingPassword
+                keyAlias = "video-wallpaper"
+                keyPassword = signingPassword
+            }
+        }
     }
 
     buildTypes {
         release {
+            if (signingConfigs.findByName("ciRelease") != null) {
+                signingConfig = signingConfigs.getByName("ciRelease")
+            }
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

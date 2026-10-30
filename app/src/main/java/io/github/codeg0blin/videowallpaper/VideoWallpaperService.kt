@@ -6,11 +6,13 @@ import android.media.PlaybackParams
 import android.net.Uri
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.SurfaceHolder
 import androidx.preference.PreferenceManager
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Renders the user's chosen video as a looping live wallpaper.
@@ -26,6 +28,27 @@ class VideoWallpaperService : WallpaperService() {
     inner class VideoEngine : Engine(), SharedPreferences.OnSharedPreferenceChangeListener {
 
         private var mediaPlayer: MediaPlayer? = null
+        // A preparing MediaPlayer must not receive start/pause on unlock.
+        private var playerPrepared = false
+        // Keep calls into MediaPlayer off the render thread: its native getters
+        // can block during codec transitions (notably while unlocking).
+        @Volatile private var videoWidth = 0
+        @Volatile private var videoHeight = 0
+
+        // Brief visibility changes during unlocking shouldn't repeatedly pause
+        // and resume the hardware decoder.
+        private val playbackHandler = Handler(Looper.getMainLooper())
+        private val pausePlaybackRunnable = Runnable {
+            if (!visible) {
+                mediaPlayer?.let { player ->
+                    val speed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
+                    applySpeed(player, speed)
+                }
+            }
+        }
+
+        // Coalesce frame callbacks; never queue unlimited GL draws on unlock.
+        private val frameDrawQueued = AtomicBoolean(false)
         private var prefs: SharedPreferences? = null
         // @Volatile because the GIF path reads it on the render thread.
         @Volatile
@@ -94,6 +117,7 @@ class VideoWallpaperService : WallpaperService() {
         // frame arrival means we draw only as often as the video itself
         // produces new frames.
         private val drawFrameRunnable = Runnable {
+            frameDrawQueued.set(false)
             if (!visible) return@Runnable
             val r = renderer ?: return@Runnable
             val holder = currentHolder ?: return@Runnable
@@ -103,12 +127,11 @@ class VideoWallpaperService : WallpaperService() {
                 r.drawGifFrame(holder.surfaceFrame.width(), holder.surfaceFrame.height())
                 return@Runnable
             }
-            val player = mediaPlayer
             r.drawFrame(
                 holder.surfaceFrame.width(),
                 holder.surfaceFrame.height(),
-                player?.let { if (weBelieveStarted || it.isPlaying) it.videoWidth else 0 } ?: 0,
-                player?.let { if (weBelieveStarted || it.isPlaying) it.videoHeight else 0 } ?: 0
+                videoWidth,
+                videoHeight
             )
         }
 
@@ -138,7 +161,11 @@ class VideoWallpaperService : WallpaperService() {
                     // docs), so hop back onto our own render thread via
                     // renderHandler before touching the renderer/GL state.
                     r.onFrameAvailableListener = {
-                        renderHandler?.post(drawFrameRunnable)
+                        if (renderHandler === handler && visible &&
+                            frameDrawQueued.compareAndSet(false, true)
+                        ) {
+                            handler.post(drawFrameRunnable)
+                        }
                     }
                 } else {
                     Log.e(TAG, "VideoFrameRenderer failed to initialize — falling back to no crop/fit support")
@@ -149,14 +176,18 @@ class VideoWallpaperService : WallpaperService() {
                 // block runs on the render thread while preparePlayer()
                 // touches MediaPlayer, which needs to stay on the main
                 // thread. Post back to main rather than calling directly.
-                android.os.Handler(mainLooper).post {
-                    preparePlayer(holder)
+                playbackHandler.post {
+                    // Do not resurrect the player if the surface is gone.
+                    if (currentHolder === holder && renderHandler === handler) {
+                        preparePlayer(holder)
+                    }
                 }
             }
         }
 
         override fun onVisibilityChanged(isVisible: Boolean) {
             visible = isVisible
+            playbackHandler.removeCallbacks(pausePlaybackRunnable)
             if (isVisible) {
                 startDrawLoopIfVisible()
             } else {
@@ -175,8 +206,14 @@ class VideoWallpaperService : WallpaperService() {
             // which some OEM MediaPlayer implementations (observed on
             // Adreno/TCL) turn into error -38. Funneling everything through
             // applySpeed keeps state transitions to one guarded path.
-            val speed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
-            applySpeed(player, speed)
+            if (isVisible) {
+                if (playerPrepared) {
+                    val speed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
+                    applySpeed(player, speed)
+                }
+            } else if (playerPrepared) {
+                playbackHandler.postDelayed(pausePlaybackRunnable, VISIBILITY_PAUSE_DELAY_MS)
+            }
         }
 
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -220,6 +257,7 @@ class VideoWallpaperService : WallpaperService() {
             renderThread?.quitSafely()
             renderThread = null
             renderHandler = null
+            frameDrawQueued.set(false)
         }
 
         /**
@@ -236,7 +274,7 @@ class VideoWallpaperService : WallpaperService() {
                     // Speed can be applied to the running player without re-preparing.
                     val speed = sharedPreferences?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED)
                         ?: DEFAULT_SPEED
-                    mediaPlayer?.let { applySpeed(it, speed) }
+                    if (playerPrepared) mediaPlayer?.let { applySpeed(it, speed) }
                     renderHandler?.post { gifPlayer?.setSpeed(speed) }
                 }
                 PREF_SCALING_MODE -> {
@@ -318,12 +356,25 @@ class VideoWallpaperService : WallpaperService() {
                 }
                 player.isLooping = true
                 player.setVolume(0f, 0f) // wallpapers should be silent
+                player.setOnVideoSizeChangedListener { changedPlayer, width, height ->
+                    if (changedPlayer === mediaPlayer) {
+                        videoWidth = width
+                        videoHeight = height
+                        startDrawLoopIfVisible()
+                    }
+                }
                 player.setOnPreparedListener {
+                    if (it !== mediaPlayer) return@setOnPreparedListener
+                    playerPrepared = true
+                    videoWidth = it.videoWidth
+                    videoHeight = it.videoHeight
                     consecutiveErrorRetries = 0
-                    applySpeed(it, speed)
+                    val latestSpeed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
+                    applySpeed(it, latestSpeed)
                     startDrawLoopIfVisible()
                 }
-                player.setOnErrorListener { _, what, extra ->
+                player.setOnErrorListener { errorPlayer, what, extra ->
+                    if (errorPlayer !== mediaPlayer) return@setOnErrorListener true
                     Log.e(TAG, "MediaPlayer error: what=$what extra=$extra")
                     // The player is unusable after any error — it's stuck in
                     // MEDIA_PLAYER_STATE_ERROR and further start()/pause() calls
@@ -346,7 +397,14 @@ class VideoWallpaperService : WallpaperService() {
                         if (consecutiveErrorRetries <= MAX_CONSECUTIVE_ERROR_RETRIES) {
                             Log.w(TAG, "Transient MediaPlayer error — retrying prepare " +
                                     "($consecutiveErrorRetries/$MAX_CONSECUTIVE_ERROR_RETRIES), selection kept")
-                            currentHolder?.let { preparePlayer(it) }
+                            // Avoid instant codec reinitialization on the main
+                            // thread while the lockscreen animation is active.
+                            val retryGeneration = prepareGeneration
+                            playbackHandler.postDelayed({
+                                if (retryGeneration == prepareGeneration) {
+                                    currentHolder?.let { preparePlayer(it) }
+                                }
+                            }, 200L * consecutiveErrorRetries)
                         } else {
                             Log.e(TAG, "Gave up after $MAX_CONSECUTIVE_ERROR_RETRIES consecutive " +
                                     "errors — leaving selection intact but not retrying further")
@@ -444,15 +502,8 @@ class VideoWallpaperService : WallpaperService() {
                         appliedSpeed = speed
                     }
                 } else {
-                    // PlaybackParams can only be set on a running player on some
-                    // OEM implementations, so briefly start, apply, then pause
-                    // if we're not actually meant to be visible yet.
-                    if (speed != 1.0f && !weBelieveStarted) {
-                        player.start()
-                        weBelieveStarted = true
-                        player.playbackParams = PlaybackParams().setSpeed(speed)
-                        appliedSpeed = speed
-                    }
+                    // Don't start the decoder just to set speed while hidden.
+                    // Apply speed when visible playback actually starts.
                     if (weBelieveStarted) {
                         player.pause()
                         weBelieveStarted = false
@@ -496,7 +547,11 @@ class VideoWallpaperService : WallpaperService() {
          */
         private fun startDrawLoopIfVisible() {
             if (!visible) return
-            renderHandler?.post(drawFrameRunnable)
+            if (frameDrawQueued.compareAndSet(false, true)) {
+                val handler = renderHandler
+                if (handler != null) handler.post(drawFrameRunnable)
+                else frameDrawQueued.set(false)
+            }
         }
 
         /** No-op now that drawing is event-driven rather than a loop —
@@ -505,9 +560,11 @@ class VideoWallpaperService : WallpaperService() {
          */
         private fun stopDrawLoop() {
             renderHandler?.removeCallbacks(drawFrameRunnable)
+            frameDrawQueued.set(false)
         }
 
         private fun releasePlayer() {
+            playbackHandler.removeCallbacks(pausePlaybackRunnable)
             // Invalidate any GIF load still in flight, and stop/discard the
             // active GIF player on the render thread that owns it. If there
             // is no render thread any more, nothing else can be using it.
@@ -530,6 +587,9 @@ class VideoWallpaperService : WallpaperService() {
                 it.release()
             }
             mediaPlayer = null
+            playerPrepared = false
+            videoWidth = 0
+            videoHeight = 0
             weBelieveStarted = false
             appliedSpeed = 1.0f
         }
@@ -538,6 +598,7 @@ class VideoWallpaperService : WallpaperService() {
     companion object {
         private const val TAG = "VideoWallpaperService"
         private const val MAX_CONSECUTIVE_ERROR_RETRIES = 3
+        private const val VISIBILITY_PAUSE_DELAY_MS = 300L
         const val PREF_VIDEO_URI = "selected_video_uri"
         const val PREF_PLAYBACK_SPEED = "playback_speed"
         const val PREF_SCALING_MODE = "scaling_mode"
