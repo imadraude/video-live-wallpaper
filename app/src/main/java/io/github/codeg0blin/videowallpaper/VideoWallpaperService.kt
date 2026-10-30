@@ -30,6 +30,9 @@ class VideoWallpaperService : WallpaperService() {
         private var mediaPlayer: MediaPlayer? = null
         // A preparing MediaPlayer must not receive start/pause on unlock.
         private var playerPrepared = false
+        // A retained decoder has no video destination until the replacement
+        // EGL/native Surface is ready. Never resume it in this interval.
+        private var awaitingVideoSurface = false
         // Keep calls into MediaPlayer off the render thread: its native getters
         // can block during codec transitions (notably while unlocking).
         @Volatile private var videoWidth = 0
@@ -236,6 +239,7 @@ class VideoWallpaperService : WallpaperService() {
                 try {
                     val surface = renderer?.getVideoInputSurface() ?: holder.surface
                     retained.setSurface(surface)
+                    awaitingVideoSurface = false
                     Log.d(TAG, "Reused prepared MediaPlayer after wallpaper surface recreation")
                     if (renderer == null) applyNativeScaling(retained)
                     if (visible) {
@@ -288,7 +292,7 @@ class VideoWallpaperService : WallpaperService() {
                 if (isVisible) gifPlayer?.start() else gifPlayer?.pause()
             }
             val player = mediaPlayer ?: return
-            if (currentHolder == null) return
+            if (currentHolder == null || awaitingVideoSurface) return
             // Route through applySpeed rather than calling start()/pause()
             // directly here. Having two independent call sites (this one and
             // the one inside preparePlayer's onPreparedListener) both touching
@@ -355,6 +359,7 @@ class VideoWallpaperService : WallpaperService() {
                     weBelieveStarted = false
                 }
                 player.setSurface(null)
+                awaitingVideoSurface = true
                 playbackHandler.removeCallbacks(releaseDetachedPlayerRunnable)
                 playbackHandler.postDelayed(
                     releaseDetachedPlayerRunnable, SURFACE_REUSE_GRACE_MS
@@ -739,6 +744,7 @@ class VideoWallpaperService : WallpaperService() {
             mediaPlayer?.release()
             mediaPlayer = null
             playerPrepared = false
+            awaitingVideoSurface = false
             videoWidth = 0
             videoHeight = 0
             weBelieveStarted = false
