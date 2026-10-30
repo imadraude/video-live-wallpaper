@@ -145,6 +145,22 @@ class VideoWallpaperService : WallpaperService() {
             super.onSurfaceCreated(holder)
             currentHolder = holder
             consecutiveErrorRetries = 0
+            configureOutput(holder)
+        }
+
+        /**
+         * Direct mode hands decoded video straight to Android's wallpaper
+         * Surface, bypassing our EGL context, GL shaders and extra frame draw.
+         * Animated GIFs always retain the GL pipeline (they have no MediaPlayer
+         * decoder). Only recreate these resources on source/mode changes.
+         */
+        private fun configureOutput(holder: SurfaceHolder) {
+            if (currentHolder !== holder) return
+            if (!needsGlRenderer()) {
+                Log.i(TAG, "Efficient mode: native video surface, no OpenGL renderer")
+                preparePlayer(holder)
+                return
+            }
 
             val thread = HandlerThread("VideoFrameRenderer").also { it.start() }
             renderThread = thread
@@ -184,6 +200,23 @@ class VideoWallpaperService : WallpaperService() {
                 }
             }
         }
+
+        private fun isSelectedGif(): Boolean {
+            val preferences = prefs ?: return false
+            // Cache the file header once, not at every screen unlock.
+            if (preferences.contains(PREF_SOURCE_IS_GIF)) {
+                return preferences.getBoolean(PREF_SOURCE_IS_GIF, false)
+            }
+            val uri = preferences.getString(PREF_VIDEO_URI, null)?.let { Uri.parse(it) }
+                ?: return false
+            return GifFiles.looksLikeGif(applicationContext.contentResolver, uri).also {
+                preferences.edit().putBoolean(PREF_SOURCE_IS_GIF, it).apply()
+            }
+        }
+
+        private fun needsGlRenderer(): Boolean =
+            prefs?.getInt(PREF_RENDER_MODE, DEFAULT_RENDER_MODE) != RENDER_MODE_EFFICIENT ||
+                isSelectedGif()
 
         override fun onVisibilityChanged(isVisible: Boolean) {
             visible = isVisible
@@ -278,6 +311,11 @@ class VideoWallpaperService : WallpaperService() {
                     renderHandler?.post { gifPlayer?.setSpeed(speed) }
                 }
                 PREF_SCALING_MODE -> {
+                    // The direct Surface may honor the system player's scaling
+                    // hint on some devices. Don't rebuild the decoder for this.
+                    if (playerPrepared && renderer == null) {
+                        mediaPlayer?.let { applyNativeScaling(it) }
+                    }
                     // Unlike video URI, scaling mode doesn't need a full
                     // MediaPlayer re-prepare now that it's handled by the
                     // renderer's geometry rather than MediaPlayer itself —
@@ -291,8 +329,13 @@ class VideoWallpaperService : WallpaperService() {
                         }
                     }
                 }
-                PREF_VIDEO_URI -> {
-                    preparePlayer(holder)
+                PREF_VIDEO_URI, PREF_RENDER_MODE -> {
+                    // A direct Surface and an OpenGL input Surface are different
+                    // video output paths; switch them only when the user changes
+                    // the file or rendering mode, never on each visibility event.
+                    releasePlayer()
+                    releaseRenderer()
+                    configureOutput(holder)
                 }
             }
         }
@@ -328,7 +371,7 @@ class VideoWallpaperService : WallpaperService() {
                 return
             }
 
-            if (GifFiles.looksLikeGif(applicationContext.contentResolver, uri)) {
+            if (isSelectedGif()) {
                 prepareGif(uri, speed)
                 return
             }
@@ -347,11 +390,8 @@ class VideoWallpaperService : WallpaperService() {
                 if (inputSurface != null) {
                     player.setSurface(inputSurface)
                 } else {
-                    // Renderer not ready yet (still initializing on the
-                    // render thread, or failed to start) — fall back to the
-                    // raw surface so video still plays, just without
-                    // crop/fit support, rather than showing nothing.
-                    Log.w(TAG, "Renderer not ready — falling back to raw surface (no crop/fit)")
+                    // Efficient path or EGL initialization failed. The system
+                    // decoder renders directly onto the wallpaper's Surface.
                     player.setSurface(holder.surface)
                 }
                 player.isLooping = true
@@ -369,6 +409,7 @@ class VideoWallpaperService : WallpaperService() {
                     videoWidth = it.videoWidth
                     videoHeight = it.videoHeight
                     consecutiveErrorRetries = 0
+                    if (renderer == null) applyNativeScaling(it)
                     val latestSpeed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
                     applySpeed(it, latestSpeed)
                     startDrawLoopIfVisible()
@@ -515,6 +556,23 @@ class VideoWallpaperService : WallpaperService() {
         }
 
         /**
+         * Ask the system video compositor to respect Fill/Fit in direct mode.
+         * Some wallpaper implementations ignore this native scaling hint;
+         * the Compatible OpenGL mode remains available for exact cropping.
+         */
+        private fun applyNativeScaling(player: MediaPlayer) {
+            val requested = prefs?.getInt(PREF_SCALING_MODE, DEFAULT_SCALING_MODE)
+                ?: DEFAULT_SCALING_MODE
+            try {
+                player.setVideoScalingMode(requested)
+            } catch (e: IllegalStateException) {
+                Log.w(TAG, "Native video scaling mode unavailable on this surface", e)
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "Native video scaling mode unsupported", e)
+            }
+        }
+
+        /**
          * Reads PREF_SCALING_MODE and applies it to the renderer, mapping
          * from MediaPlayer's int constants (what the pref/UI already use)
          * to our ScalingMode enum. Safe to call even if renderer isn't
@@ -602,6 +660,11 @@ class VideoWallpaperService : WallpaperService() {
         const val PREF_VIDEO_URI = "selected_video_uri"
         const val PREF_PLAYBACK_SPEED = "playback_speed"
         const val PREF_SCALING_MODE = "scaling_mode"
+        const val PREF_RENDER_MODE = "render_mode"
+        const val PREF_SOURCE_IS_GIF = "source_is_gif"
+        const val RENDER_MODE_COMPATIBLE = 0
+        const val RENDER_MODE_EFFICIENT = 1
+        const val DEFAULT_RENDER_MODE = RENDER_MODE_COMPATIBLE
         const val DEFAULT_SPEED = 1.0f
         const val DEFAULT_SCALING_MODE = MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
     }
