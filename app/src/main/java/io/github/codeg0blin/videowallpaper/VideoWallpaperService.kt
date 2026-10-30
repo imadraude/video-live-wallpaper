@@ -110,6 +110,9 @@ class VideoWallpaperService : WallpaperService() {
         // Kept so the pref listener can trigger a re-prepare with the
         // correct surface without waiting for the next onSurfaceCreated.
         private var currentHolder: SurfaceHolder? = null
+        // If the decoder reports geometry different from the cached preview,
+        // do not retry native output until a different video is chosen.
+        private var forceAspectSafeGl = false
 
         // Owns the EGL/GL pipeline that draws video frames with real Fill/Fit
         // crop-or-letterbox math (see VideoFrameRenderer) — replaces the old
@@ -180,20 +183,23 @@ class VideoWallpaperService : WallpaperService() {
             } else 0L
             Log.i(TAG, "Surface created id=${System.identityHashCode(this)} after=${surfaceAbsentMs}ms, warmCodec=${mediaPlayer != null && playerPrepared}")
             consecutiveErrorRetries = 0
-            configureOutput(holder)
+            // The final wallpaper dimensions may not exist until
+            // onSurfaceChanged(). Do not guess and start a distorted native
+            // output before Android tells us the real viewport size.
+            if (holder.surfaceFrame.width() > 0 && holder.surfaceFrame.height() > 0) {
+                configureOutput(holder)
+            }
         }
 
         /**
-         * Direct output is used only when the selected settings can be
-         * displayed without modifying the aspect ratio. Native wallpaper
-         * surfaces may ignore MediaPlayer's Fit scaling hint, so Fit always
-         * uses the existing OpenGL renderer for proper black letterbox bars.
-         * GIFs also always require the OpenGL renderer.
+         * Direct output needs no cropping only when a known video matches
+         * the actual Surface aspect ratio. Otherwise OpenGL handles Fill
+         * cropping and Fit letterboxing for both playback engines.
          */
         private fun configureOutput(holder: SurfaceHolder) {
             if (currentHolder !== holder) return
             if (!needsGlRenderer()) {
-                Log.i(TAG, "Efficient Fill mode: native video surface, no OpenGL renderer")
+                Log.i(TAG, "Efficient Fill: verified matching aspect, native video Surface")
                 attachOrPreparePlayer(holder)
                 return
             }
@@ -345,6 +351,7 @@ class VideoWallpaperService : WallpaperService() {
                         if (media3Player === backend) {
                             videoWidth = width
                             videoHeight = height
+                            enforceActualVideoAspect(width, height)
                             startDrawLoopIfVisible()
                         }
                     },
@@ -398,10 +405,41 @@ class VideoWallpaperService : WallpaperService() {
                 ?: DEFAULT_RENDER_MODE
             val fit = prefs?.getInt(PREF_SCALING_MODE, DEFAULT_SCALING_MODE) ==
                 MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT
-            // Compatible and Fit always use GL. Avoid sniffing the video
-            // header unless native output would otherwise be possible.
-            if (mode != RENDER_MODE_EFFICIENT || fit) return true
-            return RenderModePolicy.requiresOpenGl(mode, isSelectedGif(), fit = false)
+            if (forceAspectSafeGl || mode != RENDER_MODE_EFFICIENT || fit) return true
+            if (isSelectedGif()) return true
+
+            val preferences = prefs ?: return true
+            val currentUri = preferences.getString(PREF_VIDEO_URI, null)
+            val measuredUri = preferences.getString(PREF_SOURCE_ASPECT_URI, null)
+            // Only trust video dimensions collected from the PREVIEW of this
+            // particular URI. Old source dimensions must never affect a
+            // newly selected file; unknown geometry defaults to OpenGL.
+            if (currentUri.isNullOrBlank() || measuredUri != currentUri) return true
+            val width = preferences.getInt(PREF_SOURCE_ASPECT_WIDTH, 0)
+            val height = preferences.getInt(PREF_SOURCE_ASPECT_HEIGHT, 0)
+            val frame = currentHolder?.surfaceFrame ?: return true
+            return RenderModePolicy.requiresOpenGl(
+                mode, isGif = false, fit = false,
+                videoWidth = width, videoHeight = height,
+                surfaceWidth = frame.width(), surfaceHeight = frame.height()
+            )
+        }
+
+        /**
+         * The decoded dimensions are authoritative. If a cached preview
+         * measurement was wrong (or the viewport was resized), immediately
+         * route subsequent output through OpenGL instead of stretching.
+         */
+        private fun enforceActualVideoAspect(width: Int, height: Int) {
+            if (width <= 0 || height <= 0 || renderHandler != null || forceAspectSafeGl) return
+            val holder = currentHolder ?: return
+            val frame = holder.surfaceFrame
+            if (!RenderModePolicy.hasMatchingAspect(width, height, frame.width(), frame.height())) {
+                Log.i(TAG, "Native wallpaper proportions differ from decoded video; switching to GL Fill")
+                forceAspectSafeGl = true
+                releasePlayer()
+                configureOutput(holder)
+            }
         }
 
         override fun onVisibilityChanged(isVisible: Boolean) {
@@ -457,10 +495,18 @@ class VideoWallpaperService : WallpaperService() {
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
             super.onSurfaceChanged(holder, format, width, height)
             currentHolder = holder
-            // Resize alone doesn't produce a new video frame, but the
-            // viewport dimensions changed, so geometry needs recomputing
-            // (handled inside drawFrame's cache-invalidation check) and
-            // the screen needs a redraw at the new size.
+            // The Surface dimensions become reliable here on first startup.
+            // For an existing direct output, changing viewport geometry must
+            // never silently introduce stretching.
+            if (width > 0 && height > 0 && renderHandler == null &&
+                mediaPlayer == null && media3Player == null
+            ) {
+                configureOutput(holder)
+            } else if (renderHandler == null && needsGlRenderer()) {
+                Log.i(TAG, "Wallpaper aspect changed; switching direct output to OpenGL")
+                releasePlayer()
+                configureOutput(holder)
+            }
             startDrawLoopIfVisible()
         }
 
@@ -601,6 +647,7 @@ class VideoWallpaperService : WallpaperService() {
                     }
                 }
                 PREF_VIDEO_URI, PREF_RENDER_MODE, PREF_PLAYBACK_ENGINE -> {
+                    if (key == PREF_VIDEO_URI) forceAspectSafeGl = false
                     // A direct Surface and an OpenGL input Surface are different
                     // video output paths; switch them only when the user changes
                     // the file or rendering mode, never on each visibility event.
@@ -673,6 +720,7 @@ class VideoWallpaperService : WallpaperService() {
                     if (changedPlayer === mediaPlayer) {
                         videoWidth = width
                         videoHeight = height
+                        enforceActualVideoAspect(width, height)
                         startDrawLoopIfVisible()
                     }
                 }
@@ -683,6 +731,8 @@ class VideoWallpaperService : WallpaperService() {
                         "${SystemClock.elapsedRealtime() - prepareStartedAtMs}ms")
                     videoWidth = it.videoWidth
                     videoHeight = it.videoHeight
+                    enforceActualVideoAspect(videoWidth, videoHeight)
+                    if (it !== mediaPlayer) return@setOnPreparedListener
                     consecutiveErrorRetries = 0
                     if (renderer == null) applyNativeScaling(it)
                     val latestSpeed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
@@ -948,6 +998,9 @@ class VideoWallpaperService : WallpaperService() {
         const val PREF_SCALING_MODE = "scaling_mode"
         const val PREF_RENDER_MODE = "render_mode"
         const val PREF_SOURCE_IS_GIF = "source_is_gif"
+        const val PREF_SOURCE_ASPECT_URI = "source_aspect_uri"
+        const val PREF_SOURCE_ASPECT_WIDTH = "source_aspect_width"
+        const val PREF_SOURCE_ASPECT_HEIGHT = "source_aspect_height"
         const val PREF_PLAYBACK_ENGINE = "playback_engine"
         const val PLAYBACK_ENGINE_SYSTEM = 0
         const val PLAYBACK_ENGINE_MEDIA3 = 1
