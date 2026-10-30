@@ -11,7 +11,7 @@ val signingPassword = System.getenv("CI_SIGNING_PASSWORD")
 
 android {
     namespace = "io.github.codeg0blin.videowallpaper"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "io.github.imadraude.videowallpaper"
