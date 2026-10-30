@@ -28,6 +28,8 @@ class VideoWallpaperService : WallpaperService() {
     inner class VideoEngine : Engine(), SharedPreferences.OnSharedPreferenceChangeListener {
 
         private var mediaPlayer: MediaPlayer? = null
+        // A preparing MediaPlayer must not receive start/pause on unlock.
+        private var playerPrepared = false
         // Keep calls into MediaPlayer off the render thread: its native getters
         // can block during codec transitions (notably while unlocking).
         @Volatile private var videoWidth = 0
@@ -205,9 +207,11 @@ class VideoWallpaperService : WallpaperService() {
             // Adreno/TCL) turn into error -38. Funneling everything through
             // applySpeed keeps state transitions to one guarded path.
             if (isVisible) {
-                val speed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
-                applySpeed(player, speed)
-            } else {
+                if (playerPrepared) {
+                    val speed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
+                    applySpeed(player, speed)
+                }
+            } else if (playerPrepared) {
                 playbackHandler.postDelayed(pausePlaybackRunnable, VISIBILITY_PAUSE_DELAY_MS)
             }
         }
@@ -270,7 +274,7 @@ class VideoWallpaperService : WallpaperService() {
                     // Speed can be applied to the running player without re-preparing.
                     val speed = sharedPreferences?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED)
                         ?: DEFAULT_SPEED
-                    mediaPlayer?.let { applySpeed(it, speed) }
+                    if (playerPrepared) mediaPlayer?.let { applySpeed(it, speed) }
                     renderHandler?.post { gifPlayer?.setSpeed(speed) }
                 }
                 PREF_SCALING_MODE -> {
@@ -352,20 +356,25 @@ class VideoWallpaperService : WallpaperService() {
                 }
                 player.isLooping = true
                 player.setVolume(0f, 0f) // wallpapers should be silent
-                player.setOnVideoSizeChangedListener { _, width, height ->
-                    videoWidth = width
-                    videoHeight = height
-                    startDrawLoopIfVisible()
+                player.setOnVideoSizeChangedListener { changedPlayer, width, height ->
+                    if (changedPlayer === mediaPlayer) {
+                        videoWidth = width
+                        videoHeight = height
+                        startDrawLoopIfVisible()
+                    }
                 }
                 player.setOnPreparedListener {
                     if (it !== mediaPlayer) return@setOnPreparedListener
+                    playerPrepared = true
                     videoWidth = it.videoWidth
                     videoHeight = it.videoHeight
                     consecutiveErrorRetries = 0
-                    applySpeed(it, speed)
+                    val latestSpeed = prefs?.getFloat(PREF_PLAYBACK_SPEED, DEFAULT_SPEED) ?: DEFAULT_SPEED
+                    applySpeed(it, latestSpeed)
                     startDrawLoopIfVisible()
                 }
-                player.setOnErrorListener { _, what, extra ->
+                player.setOnErrorListener { errorPlayer, what, extra ->
+                    if (errorPlayer !== mediaPlayer) return@setOnErrorListener true
                     Log.e(TAG, "MediaPlayer error: what=$what extra=$extra")
                     // The player is unusable after any error — it's stuck in
                     // MEDIA_PLAYER_STATE_ERROR and further start()/pause() calls
@@ -388,7 +397,14 @@ class VideoWallpaperService : WallpaperService() {
                         if (consecutiveErrorRetries <= MAX_CONSECUTIVE_ERROR_RETRIES) {
                             Log.w(TAG, "Transient MediaPlayer error — retrying prepare " +
                                     "($consecutiveErrorRetries/$MAX_CONSECUTIVE_ERROR_RETRIES), selection kept")
-                            currentHolder?.let { preparePlayer(it) }
+                            // Avoid instant codec reinitialization on the main
+                            // thread while the lockscreen animation is active.
+                            val retryGeneration = prepareGeneration
+                            playbackHandler.postDelayed({
+                                if (retryGeneration == prepareGeneration) {
+                                    currentHolder?.let { preparePlayer(it) }
+                                }
+                            }, 200L * consecutiveErrorRetries)
                         } else {
                             Log.e(TAG, "Gave up after $MAX_CONSECUTIVE_ERROR_RETRIES consecutive " +
                                     "errors — leaving selection intact but not retrying further")
@@ -571,6 +587,7 @@ class VideoWallpaperService : WallpaperService() {
                 it.release()
             }
             mediaPlayer = null
+            playerPrepared = false
             videoWidth = 0
             videoHeight = 0
             weBelieveStarted = false
