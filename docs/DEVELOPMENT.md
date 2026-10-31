@@ -19,7 +19,7 @@ A local `assembleRelease` build is not automatically signed with the repository'
 
 ## Release builds
 
-GitHub Actions checks English/Ukrainian translation parity, runs unit tests and builds the APK. Pushes to `main` also build, sign, verify and publish a versioned APK to GitHub Releases for [Obtainium](https://github.com/ImranR98/Obtainium).
+GitHub Actions checks English/Ukrainian translation parity, runs unit tests and builds a debug APK on pull requests and pushes to `main`. **Neither of those events publishes a new release.** A signed APK is built, verified and published to GitHub Releases for [Obtainium](https://github.com/ImranR98/Obtainium) only when a matching version tag is pushed (for example, `v1.4.0`).
 
 The workflow uses a stable signing key. Maintainers must configure these repository secrets:
 
@@ -28,7 +28,11 @@ The workflow uses a stable signing key. Maintainers must configure these reposit
 
 The keystore alias is `video-wallpaper`. Never commit the keystore or its password to Git. Back up both securely: losing the signing key prevents normal upgrades to APKs signed with that key.
 
-The GitHub Actions run number determines the release's version code and version name. Debug artifacts built for pull requests are **not** interchangeable with the signed release APK. A differently signed debug installation may need to be uninstalled before the first signed release can be installed.
+The public version comes from `appVersionName` in `gradle.properties` (currently `1.4.0`). To publish a later version, update that property in a reviewed commit, then push the matching `vX.Y.Z` tag from the intended release commit. The release workflow rejects tags that do not match the configured version. Changes to the README or `main` alone do not publish a new APK.
+
+Android's separate, monotonically increasing `versionCode` still uses GitHub Actions' run number, plus a fixed offset. This ensures new signed releases can upgrade older ones even though the public version no longer contains the CI run number.
+
+Debug artifacts built for pull requests are **not** interchangeable with the signed release APK. A differently signed debug installation may need to be uninstalled before the first signed release can be installed.
 
 ## Playback and rendering
 
