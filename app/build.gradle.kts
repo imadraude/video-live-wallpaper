@@ -3,9 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Each GitHub Actions run gets a monotonically increasing versionCode so
-// Obtainium recognizes newer releases without a manual version bump.
+// Android's versionCode must keep increasing even though public versions use
+// SemVer. CI run numbers provide a monotonic code independently of versionName.
 val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+val appVersionName = providers.gradleProperty("appVersionName").get()
 val signingKeyPath = System.getenv("CI_SIGNING_KEYSTORE")
 val signingPassword = System.getenv("CI_SIGNING_PASSWORD")
 
@@ -18,7 +19,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = ciRunNumber?.let { 10000 + it } ?: 10001
-        versionName = ciRunNumber?.let { "1.3.1.$it" } ?: "1.3.1"
+        versionName = appVersionName
     }
 
     signingConfigs {
