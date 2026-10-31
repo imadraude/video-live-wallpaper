@@ -7,7 +7,7 @@ plugins {
 // Encode major.minor.patch as an increasing Android versionCode:
 // 1.4.0 -> 10400, above the earlier automatically numbered 1.3.1 builds.
 val appVersion = providers.gradleProperty("appVersion").get()
-val versionMatch = Regex("""(\\d+)\\.(\\d+)\\.(\\d+)""").matchEntire(appVersion)
+val versionMatch = Regex("""(\d+)\.(\d+)\.(\d+)""").matchEntire(appVersion)
     ?: error("appVersion must be major.minor.patch")
 val (major, minor, patch) = versionMatch.destructured
 require(minor.toInt() in 0..99 && patch.toInt() in 0..99) {
