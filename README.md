@@ -1,219 +1,80 @@
-> **imadraude fork:** Unlock-performance improvements and signed Android
-> releases for [Obtainium](https://github.com/ImranR98/Obtainium).
-> The fork uses the separate Android package ID `io.github.imadraude.videowallpaper`.
+# Video Wallpaper
 
-## Languages (fork)
+Make your favourite video or GIF your Android wallpaper. Pick a file, choose how it fits your screen, and you're done.
 
-The entire in-app interface, wallpaper label, descriptions and user-facing
-error messages are available in **Ukrainian** and **English**. The app follows
-the Android system language by default. On Android 13+ you can also select a
-language specifically for this app in Android's **App languages** settings.
-English remains the fallback for other system languages.
-
-The APK build checks that both language files contain the same complete set
-of translation keys, preventing new UI strings from being left untranslated.
-
-## Install and update through Obtainium
-
-1. In Obtainium add `https://github.com/imadraude/video-live-wallpaper` as a GitHub source.
-2. Install the newest `video-wallpaper-v*.apk` from this fork's [Releases](https://github.com/imadraude/video-live-wallpaper/releases) (NOT a `-debug.apk`).
-3. Later releases use the same signing certificate and higher Android version codes, allowing in-place updates.
-
-**One-time migration:** previous automated APKs were debug-signed with ephemeral keys.
-Uninstall any earlier `io.github.imadraude.videowallpaper` debug build before
-installing the first signed release. This clears that app's saved wallpaper choice;
-the original F-Droid app is a separate package and is not affected.
-
-**Maintainer secrets:** `RELEASE_KEYSTORE_BASE64` and
-`RELEASE_SIGNING_PASSWORD` must be configured in repository GitHub Actions
-secrets. The keystore must use alias `video-wallpaper`. The workflow does
-not print the secrets, and fails rather than publishing unsigned builds.
-Back up the keystore/password securely: losing them prevents updates to
-previously installed signed releases.
-
-Pull requests run unit tests and produce a short-lived debug artifact.
-Each push to `main` runs tests, builds and verifies a signed release APK,
-then publishes a GitHub Release for Obtainium.
-
-## Playback engines
-
-The **Playback engine** setting lets you select which video player powers
-live wallpapers:
-
-- **Media3** is the default for new installations and installations
-  without a saved playback engine preference. It uses AndroidX Media3 1.11.1
-  with hardware codec output, repeat-one playback and no selected audio track.
-  It shares the same aspect-safe direct/GL output routing as MediaPlayer.
-- **MediaPlayer** remains available as an alternative. If a user explicitly
-  selected MediaPlayer in an earlier release, that preference is preserved
-  across upgrades rather than overwritten by the new default.
-- Both engines detach and reuse prepared players when the same wallpaper
-  Engine's Surface is recreated; neither continues video playback while
-  hidden. GIFs use the original GIF renderer regardless of the selected engine.
-- Media3 reports dropped video frames and first-frame latency in logcat
-  (tag `Media3WallpaperPlayer`). It also logs repeat-boundary transitions,
-  but that event is not a frame-perfect proof of a gapless loop.
-- Changing the playback engine releases the previous player and starts the
-  selected one. The app keeps the original video URI and other preferences.
-
-Both engines use hardware decoding where supported. Performance and battery
-usage depend on the device and video format. You can switch engines without
-reselecting the video.
-The in-app VideoView preview is unchanged; the engine setting controls the
-live wallpaper, not the preview.
-
-## Wallpaper rendering modes
-
-- **Efficient (Ефективний)** uses direct video output only when the
-  selected source has a measured aspect ratio matching the actual wallpaper
-  Surface, so Android cannot distort it. Other **Fill** videos automatically
-  use the event-driven OpenGL renderer to crop edges without stretching.
-  **Fit** always uses OpenGL to preserve the entire video with black bars.
-  Source dimensions are cached from the already-prepared in-app preview and
-  checked again against decoder dimensions at runtime. Unknown or
-  mismatched dimensions default to safe aspect-correct OpenGL output. The
-  renderer accounts for 90/270 degree video texture orientation.
-  This deliberate fallback uses some extra GPU bandwidth but preserves
-  aspect ratio in both MediaPlayer and Media3.
-- **Compatible (Сумісний)** uses the OpenGL ES pipeline for both Fill and Fit
-  with aspect-correct cropping and letterboxing. It remains the default for
-  existing installations.
-- GIF wallpapers always use Compatible rendering, even if Efficient is
-  selected, because the custom GIF decoder needs a GPU texture.
-- Switching modes restarts the wallpaper player once. Simple lock/unlock
-  visibility changes do not switch modes. The application never recompresses
-  your source video in either mode.
-
-For meaningful power and smoothness comparisons, try the same 1080p/30 fps
-video in both modes on the same phone. Results depend on the Android device,
-codec, launcher, and wallpaper implementation.
-
-## SDR color fidelity and OpenGL reliability (fork)
-
-The **Compatible** renderer uses the default EGL window surface rather
-than forcing an sRGB-encoded framebuffer. The forced sRGB surface introduced
-earlier could apply unwanted gamma encoding to RGB values obtained from a
-video decoder's external OES texture, causing pale, washed-out colors on
-some phones. This change restores the existing video shader's passthrough
-behavior: no saturation filter, gamma curve, transcoding or sharpening.
-Compare the same source in Efficient and Compatible modes on the target
-device to confirm whether this fixes the visible regression.
-
-The video and GIF fragment shaders use high-precision floats where the GPU
-supports them and fall back to medium precision on older OpenGL ES devices.
-Frame callbacks are delivered on the EGL rendering thread, previously
-queued renderer initialization is cancelled safely after surface destruction,
-the app skips presenting uninitialized video textures, and opaque Fill frames
-avoid redundant full-screen clears. Lost EGL swaps are logged once.
-
-**Important color limitation:** Display P3, BT.2020, HDR10, HLG and 10-bit
-output are **not** implemented in the custom OpenGL pipeline. Correct HDR
-rendering needs source color metadata, precision-preserving decode, supported
-window formats and tone/gamut mapping. Simply tagging an SDR texture as P3
-or HDR would make colors *less* accurate. If an HDR source is used, test
-the native **Efficient** mode first; actual color handling is device-specific
-and still needs validation against native playback.
-
-## Unlock responsiveness (fork)
-
-Video dimensions are cached and OpenGL frame callbacks arrive on the render
-thread, where frames can now be drawn immediately without an additional
-queued task. Fast hide/show transitions keep video playback warm for up to
-1.1 seconds instead of repeatedly pausing and starting the codec.
-
-When Android destroys and later recreates **the same wallpaper Engine's**
-output Surface, a prepared video MediaPlayer now remains **paused and detached
-for the Engine's lifetime**, not just 2.5 seconds. This avoids reopening the
-file and re-running `prepareAsync()` even after a long period with the screen
-off, while not drawing frames or consuming continuous CPU. The idle decoder
-does retain some memory/hardware codec resources; Android's relevant
-low-memory trim callbacks cause it to be released. The old decoder is also
-released when the Engine is destroyed, so a completely new Engine or process
-may still need a cold start.
-
-The release path no longer calls the synchronous `isPlaying()` and `stop()`
-methods just before `release()`. GIFs and incomplete video preparations still
-use the original safe teardown flow. These changes target minor unlock
-stutters without decoding video indefinitely while the screen is off.
-
-Lifecycle diagnostics are logged under `VideoWallpaperService`: the app
-records when an Engine/Surface is recreated, whether the prepared decoder was
-reused, cold preparation time, and first video frame time. Logs contain no
-video paths or selected file names. Android can still discard the Engine or
-the process during a long screen-off interval, in which case an entirely new
-decoder and EGL context may be necessary.
-
-**Device verification is required.** Test cold unlock after a minute and
-after a longer interval with the same file. For USB/ADB debugging, collect
-`adb logcat -d -s VideoWallpaperService:I VideoFrameRenderer:W` just after a
-stutter. The traces distinguish a cold decoder reprepare from a reused player;
-they are not a full frame-timeline profiler.
-
----
-
-# Video Live Wallpaper
-
-A small Android app that lets you pick any video or animated GIF from your device and set it as a looping live wallpaper.
+**[Українською](README.uk.md)** · **[Download APK](https://github.com/imadraude/video-live-wallpaper/releases/latest)** · **[Report an issue](https://github.com/imadraude/video-live-wallpaper/issues)**
 
 <p align="center">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.jpg" width="260" alt="Main screen: choose a video, playback speed, crop mode">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.jpg" width="260" alt="Android's live wallpaper preview screen">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.jpg" width="260" alt="Video Wallpaper settings screen">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.jpg" width="260" alt="Android wallpaper preview">
 </p>
 
-## Features
+## What you can do
 
-- Pick a video or animated GIF with the system file picker
-- Preview it looping (muted) before setting it
-- Adjustable playback speed (0.25x–2.0x)
-- Fill (crop to cover the screen) or Fit (show the whole frame, letterboxed if needed) scaling, shown in both the preview and the wallpaper
-- Portrait phone videos display the right way up
-- One-tap wallpaper setting through Android's own live wallpaper picker
-- No ads, no analytics, no network access of any kind
+- Use a video or animated GIF from your phone.
+- See a looping, muted preview before applying it.
+- Adjust playback speed from 0.25× to 2×.
+- **Fill** the screen by cropping the edges, or **Fit** the entire frame with black bars when needed. Neither mode should stretch the picture.
+- Choose between two video engines and two rendering modes.
+- Use the app in English or Ukrainian. It follows your system language, with a per-app language option on Android 13+.
+
+No ads, accounts, trackers or internet connection required.
 
 ## Install
 
-- **F-Droid:** [Video Live Wallpaper on F-Droid](https://f-droid.org/packages/io.github.codeg0blin.videowallpaper/)
-- **GitHub:** download the APK from the [Releases](https://github.com/codeg0blin/video-live-wallpaper/releases) page.
+Requires **Android 8.0 or newer**.
 
-Requires Android 8.0 (API 26) or newer.
+Download the signed APK from [GitHub Releases](https://github.com/imadraude/video-live-wallpaper/releases/latest) and install it. To receive updates through [Obtainium](https://github.com/ImranR98/Obtainium), add this repository as a source:
 
-## How it works
+`https://github.com/imadraude/video-live-wallpaper`
 
-The app implements an Android `WallpaperService` that loops your chosen video using `MediaPlayer`. Since version 1.2.0, decoded frames go to a `SurfaceTexture` and are drawn with a small OpenGL ES 2.0 renderer (`VideoFrameRenderer.kt`), which applies the video's own rotation so portrait phone clips come out upright. This is what makes Fill and Fit scaling work: Android's usual video scaling relies on resizing the display surface, which live wallpapers aren't allowed to do (see issue #1).
+Obtainium will then pick up future GitHub releases. Your chosen video and settings are kept when updating the signed app.
 
-GIFs (version 1.3.0) don't go through `MediaPlayer`. `GifDecoder.kt` is a small pure-Kotlin GIF89a decoder written for this app, and `GifPlayer.kt` shows one frame at a time, timed by each frame's own delay divided by your speed setting. Frames are uploaded as textures to the same renderer, so Fill and Fit work identically for GIFs and videos. The app recognises GIFs by their file header rather than their file name. Transparent areas of a GIF are drawn black, and GIF files over 50 MB are not supported.
+> **Upgrading from a very old debug build?** Those builds were signed differently, so Android may require you to uninstall the debug version first. Current signed releases update normally. This fork also has a different package name from the [original F-Droid app](https://f-droid.org/packages/io.github.codeg0blin.videowallpaper/).
 
-Setting the wallpaper goes through Android's own system picker (`ACTION_CHANGE_LIVE_WALLPAPER`). The OS requires this for all live wallpaper apps, not just this one.
+## Get started
 
-Android applies a live wallpaper to the home screen and lock screen together, and the live wallpaper API has no per-screen setting. Some devices' system pickers may still offer extra choices; if yours does, the video plays on whichever screens you select.
+1. Open Video Wallpaper and select a video or GIF.
+2. Set the playback speed and choose **Fill** or **Fit**.
+3. Tap **Set as Wallpaper** and confirm in Android's wallpaper picker.
+
+Android controls which screens support live wallpapers. Depending on your phone, the picker may let you apply them to the home screen or both the home and lock screens.
+
+## Playback settings
+
+The default video engine is **Media3**, which uses Android's hardware decoder when available and loops the video. **MediaPlayer** remains available in case it works better with a particular device or file. Changing engines doesn't remove your selected video; an engine you've already chosen stays selected after an update.
+
+**Efficient** tries to send decoded video directly to the wallpaper surface. When a video needs cropping or letterboxing to keep its proportions, it automatically uses the graphics renderer instead. **Compatible** always uses that renderer. GIFs use their own decoder and the graphics renderer in either mode.
+
+You don't need to manage these technical details to use the app. The defaults work for most videos; the alternatives are there for devices that behave differently.
+
+## Good to know
+
+- Wallpaper playback is silent, even when the source file contains audio.
+- A live wallpaper uses more power than a still image. Resolution, frame rate, codec and your phone all make a difference.
+- The OpenGL renderer is intended for ordinary SDR video. HDR and wide-colour video may not look the same as in your phone's video player.
+- Android may recreate the wallpaper after the screen has been off for a while. The app tries to reuse its decoder where possible, but unlock performance can vary by device.
+- GIFs have a **50 MB** file-size limit.
 
 ## Privacy
 
-The app has no internet permission and contains no analytics, tracking or advertising code. The only thing it stores is a reference (URI) to the video or GIF you picked, kept locally in `SharedPreferences` on your device.
+Your files stay on your device. The app stores the selected file's local URI and playback preferences, and requests access only to the media you choose. It has no internet permission, analytics or advertising SDK.
 
-## Building
+## Build from source
 
-Open the project in Android Studio, or build from the command line:
+You'll need **JDK 17** and **Android SDK 36**. Build or run tests with:
 
-```
+```bash
 ./gradlew assembleDebug
-./gradlew assembleRelease
+./gradlew testDebugUnitTest
 ```
 
-Unit tests for the GIF decoder run with `./gradlew test`.
+For signing, releases and build automation, see [Development notes](docs/DEVELOPMENT.md).
 
-Requires JDK 17 and Android SDK 34 (`compileSdk`/`targetSdk` 34, `minSdk` 26).
+## Credits and license
 
-## Changelog
+This project is a maintained fork of [codeg0blin/video-live-wallpaper](https://github.com/codeg0blin/video-live-wallpaper), with additional playback options, rendering fixes, translations and GitHub releases.
 
-Per-version release notes are in [`fastlane/metadata/android/en-US/changelogs`](fastlane/metadata/android/en-US/changelogs), named by version code.
+Released under the **Apache License 2.0**. See [LICENSE](LICENSE), [NOTICE](NOTICE) and [ATTRIBUTION.md](ATTRIBUTION.md).
 
-## Contributing
-
-Bug reports and suggestions are welcome via [issues](https://github.com/codeg0blin/video-live-wallpaper/issues).
-
-## License
-
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
-
-See [ATTRIBUTION.md](ATTRIBUTION.md) for a full list of the open-source libraries this app depends on, and a note on how the source code itself was written.
+Issues and suggestions are welcome in this repository's [issue tracker](https://github.com/imadraude/video-live-wallpaper/issues).
