@@ -40,11 +40,13 @@ then publishes a GitHub Release for Obtainium.
 The **Playback engine** setting lets you select which video player powers
 live wallpapers:
 
-- **MediaPlayer** is the original default. Existing installations retain
-  their behavior unless the user explicitly selects Media3.
-- **Media3** uses AndroidX Media3 1.11.1 with hardware
-  codec output, repeat-one playback and no selected audio track. It shares
-  the same aspect-safe direct/GL output routing as MediaPlayer.
+- **Media3** is the default for new installations and installations
+  without a saved playback engine preference. It uses AndroidX Media3 1.11.1
+  with hardware codec output, repeat-one playback and no selected audio track.
+  It shares the same aspect-safe direct/GL output routing as MediaPlayer.
+- **MediaPlayer** remains available as an alternative. If a user explicitly
+  selected MediaPlayer in an earlier release, that preference is preserved
+  across upgrades rather than overwritten by the new default.
 - Both engines detach and reuse prepared players when the same wallpaper
   Engine's Surface is recreated; neither continues video playback while
   hidden. GIFs use the original GIF renderer regardless of the selected engine.
