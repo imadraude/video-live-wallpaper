@@ -3,9 +3,17 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Each GitHub Actions run gets a monotonically increasing versionCode so
-// Obtainium recognizes newer releases without a manual version bump.
-val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+// Version comes from gradle.properties, not GitHub Actions run numbers.
+// Encode major.minor.patch as an increasing Android versionCode:
+// 1.4.0 -> 10400, above the earlier automatically numbered 1.3.1 builds.
+val appVersion = providers.gradleProperty("appVersion").get()
+val versionMatch = Regex("""(\\d+)\\.(\\d+)\\.(\\d+)""").matchEntire(appVersion)
+    ?: error("appVersion must be major.minor.patch")
+val (major, minor, patch) = versionMatch.destructured
+require(minor.toInt() in 0..99 && patch.toInt() in 0..99) {
+    "Minor and patch versions must fit within 0..99 for Android versionCode."
+}
+val appVersionCode = major.toInt() * 10000 + minor.toInt() * 100 + patch.toInt()
 val signingKeyPath = System.getenv("CI_SIGNING_KEYSTORE")
 val signingPassword = System.getenv("CI_SIGNING_PASSWORD")
 
@@ -17,8 +25,8 @@ android {
         applicationId = "io.github.imadraude.videowallpaper"
         minSdk = 26
         targetSdk = 34
-        versionCode = ciRunNumber?.let { 10000 + it } ?: 10001
-        versionName = ciRunNumber?.let { "1.3.1.$it" } ?: "1.3.1"
+        versionCode = appVersionCode
+        versionName = appVersion
     }
 
     signingConfigs {
