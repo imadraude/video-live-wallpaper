@@ -215,9 +215,11 @@ class MainActivity : AppCompatActivity() {
     // --- Video playback engine --------------------------------------------
 
     private fun setupPlaybackEngineControl() {
-        val initial = prefs.getInt(
-            VideoWallpaperService.PREF_PLAYBACK_ENGINE,
-            VideoWallpaperService.DEFAULT_PLAYBACK_ENGINE
+        val initial = PlaybackEnginePolicy.resolve(
+            prefs.getInt(
+                VideoWallpaperService.PREF_PLAYBACK_ENGINE,
+                VideoWallpaperService.DEFAULT_PLAYBACK_ENGINE
+            )
         )
         binding.playbackEngineToggleGroup.check(
             if (initial == VideoWallpaperService.PLAYBACK_ENGINE_MEDIA3) {

@@ -295,8 +295,10 @@ class VideoWallpaperService : WallpaperService() {
             preparePlayer(holder)
         }
 
-        private fun isMedia3Selected(): Boolean =
-            prefs?.getInt(PREF_PLAYBACK_ENGINE, DEFAULT_PLAYBACK_ENGINE) == PLAYBACK_ENGINE_MEDIA3
+        private fun isMedia3Selected(): Boolean {
+            val saved = prefs?.getInt(PREF_PLAYBACK_ENGINE, DEFAULT_PLAYBACK_ENGINE)
+            return PlaybackEnginePolicy.resolve(saved) == PLAYBACK_ENGINE_MEDIA3
+        }
 
         /**
          * Media3 uses the same video Surface as the original MediaPlayer.
@@ -1002,9 +1004,9 @@ class VideoWallpaperService : WallpaperService() {
         const val PREF_SOURCE_ASPECT_WIDTH = "source_aspect_width"
         const val PREF_SOURCE_ASPECT_HEIGHT = "source_aspect_height"
         const val PREF_PLAYBACK_ENGINE = "playback_engine"
-        const val PLAYBACK_ENGINE_SYSTEM = 0
-        const val PLAYBACK_ENGINE_MEDIA3 = 1
-        const val DEFAULT_PLAYBACK_ENGINE = PLAYBACK_ENGINE_SYSTEM
+        const val PLAYBACK_ENGINE_SYSTEM = PlaybackEnginePolicy.MEDIA_PLAYER
+        const val PLAYBACK_ENGINE_MEDIA3 = PlaybackEnginePolicy.MEDIA3
+        const val DEFAULT_PLAYBACK_ENGINE = PlaybackEnginePolicy.DEFAULT
         const val RENDER_MODE_COMPATIBLE = RenderModePolicy.COMPATIBLE
         const val RENDER_MODE_EFFICIENT = RenderModePolicy.EFFICIENT
         const val DEFAULT_RENDER_MODE = RENDER_MODE_COMPATIBLE
