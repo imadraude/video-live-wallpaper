@@ -20,7 +20,7 @@ jobs:
     # A release must be explicitly requested: by a matching tag or by a
     # commit whose subject is exactly "release: vX.Y.Z" on main.
     env:
-      RELEASE_REQUESTED: ${{ github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: v'))) }}
+      RELEASE_REQUESTED: "${{ github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: v'))) }}"
     steps:
       - name: Check out source
         uses: actions/checkout@v4
