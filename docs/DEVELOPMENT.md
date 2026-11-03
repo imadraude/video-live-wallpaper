@@ -19,7 +19,7 @@ A local `assembleRelease` build is not automatically signed with the repository'
 
 ## Release builds
 
-GitHub Actions checks English/Ukrainian translation parity, runs unit tests and builds a debug APK on pull requests and pushes to `main`. **Neither of those events publishes a new release.** A signed APK is built, verified and published to GitHub Releases for [Obtainium](https://github.com/ImranR98/Obtainium) only when a matching version tag is pushed (for example, `v1.4.0`).
+GitHub Actions checks English/Ukrainian translation parity, runs unit tests and builds a debug APK on pull requests and pushes to `main`. Ordinary pushes and pull requests do not publish a new release. A signed APK is built, verified and published to GitHub Releases for [Obtainium](https://github.com/ImranR98/Obtainium) only when a matching version tag is pushed (for example, `v1.4.0`) or a commit on `main` has the exact subject `release: vX.Y.Z` matching `appVersionName`.
 
 The workflow uses a stable signing key. Maintainers must configure these repository secrets:
 
@@ -28,7 +28,7 @@ The workflow uses a stable signing key. Maintainers must configure these reposit
 
 The keystore alias is `video-wallpaper`. Never commit the keystore or its password to Git. Back up both securely: losing the signing key prevents normal upgrades to APKs signed with that key.
 
-The public version comes from `appVersionName` in `gradle.properties` (currently `1.4.0`). To publish a later version, update that property in a reviewed commit, then push the matching `vX.Y.Z` tag from the intended release commit. The release workflow rejects tags that do not match the configured version. Changes to the README or `main` alone do not publish a new APK.
+The public version comes from `appVersionName` in `gradle.properties` (currently `1.4.0`). To publish a later version, update that property in a reviewed commit, then either push the matching `vX.Y.Z` tag from the intended release commit or land a deliberate `release: vX.Y.Z` commit on `main`. The release workflow validates that the version matches the tag or commit subject and publishes the signed APK exactly once. For a release-commit-triggered build, `gh release create` also creates the corresponding version tag. Ordinary changes to README or `main` alone do not publish an APK.
 
 Android's separate, monotonically increasing `versionCode` still uses GitHub Actions' run number, plus a fixed offset. This ensures new signed releases can upgrade older ones even though the public version no longer contains the CI run number.
 
