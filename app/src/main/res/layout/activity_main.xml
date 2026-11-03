@@ -42,7 +42,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/titleText" />
 
-    <!-- Video preview surface -->
+    <!-- Preview frame is sized to the device's screen aspect ratio in MainActivity. -->
     <androidx.cardview.widget.CardView
         android:id="@+id/previewCard"
         android:layout_width="0dp"
@@ -54,8 +54,7 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/subtitleText"
-        app:layout_constraintBottom_toTopOf="@id/pickButton"
-        app:layout_constraintHeight_min="100dp" />
+        app:layout_constraintBottom_toTopOf="@id/pickButton" />
 
     <FrameLayout
         android:id="@+id/previewFrame"

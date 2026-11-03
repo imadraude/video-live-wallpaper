@@ -1,6 +1,8 @@
 package io.github.codeg0blin.videowallpaper
 
 import android.app.WallpaperManager
+import android.graphics.Point
+import android.os.Build
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -19,6 +21,7 @@ import android.widget.SeekBar
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.preference.PreferenceManager
 import io.github.codeg0blin.videowallpaper.R
 import io.github.codeg0blin.videowallpaper.VideoWallpaperService
@@ -68,6 +71,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        configurePreviewAspectRatio()
         binding.versionText.text = getString(R.string.version_format, appVersionName())
 
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
@@ -94,6 +98,30 @@ class MainActivity : AppCompatActivity() {
         binding.setWallpaperButton.setOnClickListener {
             launchLiveWallpaperPicker()
         }
+    }
+
+    /**
+     * Keep the preview's frame in the same proportions as the phone display,
+     * including the system bar areas. The preview card has two match-constraint
+     * dimensions, so ConstraintLayout makes it as large as the available space
+     * permits while retaining this exact ratio. On rotation Android recreates
+     * the activity and recalculates the ratio for the new display orientation.
+     */
+    @Suppress("DEPRECATION")
+    private fun configurePreviewAspectRatio() {
+        val (screenWidth, screenHeight) =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val bounds = windowManager.maximumWindowMetrics.bounds
+                bounds.width() to bounds.height()
+            } else {
+                val size = Point().also { windowManager.defaultDisplay.getRealSize(it) }
+                size.x to size.y
+            }
+        if (screenWidth <= 0 || screenHeight <= 0) return
+
+        val params = binding.previewCard.layoutParams as ConstraintLayout.LayoutParams
+        params.dimensionRatio = "${screenWidth}:${screenHeight}"
+        binding.previewCard.layoutParams = params
     }
 
     /** The installed app's own versionName, so the on-screen label can't drift from build.gradle.kts. */
