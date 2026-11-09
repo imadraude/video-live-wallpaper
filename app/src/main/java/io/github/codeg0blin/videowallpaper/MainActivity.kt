@@ -21,10 +21,13 @@ import android.widget.SeekBar
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.constraintlayout.widget.ConstraintLayout
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import androidx.preference.PreferenceManager
 import io.github.codeg0blin.videowallpaper.R
 import io.github.codeg0blin.videowallpaper.VideoWallpaperService
 import io.github.codeg0blin.videowallpaper.databinding.ActivityMainBinding
+import io.github.codeg0blin.videowallpaper.databinding.DialogAdvancedSettingsBinding
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -46,7 +49,6 @@ class MainActivity : AppCompatActivity() {
     // In-app preview for GIFs (video keeps using the VideoView).
     private lateinit var gifPreview: GifPreview
     private var showingGif = false
-    private var advancedExpanded = false
 
     // Current preview MediaPlayer, captured so we can re-apply speed when the
     // slider moves without needing to re-prepare the whole VideoView.
@@ -85,11 +87,8 @@ class MainActivity : AppCompatActivity() {
         currentSpeed = prefs.getFloat(VideoWallpaperService.Companion.PREF_PLAYBACK_SPEED, VideoWallpaperService.Companion.DEFAULT_SPEED)
         currentScalingMode = prefs.getInt(VideoWallpaperService.Companion.PREF_SCALING_MODE, VideoWallpaperService.Companion.DEFAULT_SCALING_MODE)
 
-        setupSpeedControl()
         setupCropControl()
-        setupRenderModeControl()
-        setupPlaybackEngineControl()
-        setupAdvancedControls(savedInstanceState)
+        binding.advancedToggle.setOnClickListener { showAdvancedSettings() }
         restoreSelection()
 
         binding.pickButton.setOnClickListener {
@@ -102,8 +101,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Size the scrollable preview to the device display proportions.
-     * Measuring after layout uses the actual available width (also in split screen).
+     * Keep the entire preview visible in the available area, with the exact
+     * full-display aspect ratio. ConstraintLayout scales both match-constraint
+     * dimensions down as needed; the main screen never requires scrolling.
      */
     @Suppress("DEPRECATION")
     private fun configurePreviewAspectRatio() {
@@ -116,38 +116,26 @@ class MainActivity : AppCompatActivity() {
                 size.x to size.y
             }
         if (screenWidth <= 0 || screenHeight <= 0) return
+        val params = binding.previewCard.layoutParams as ConstraintLayout.LayoutParams
+        params.dimensionRatio = "$screenWidth:$screenHeight"
+        binding.previewCard.layoutParams = params
+    }
 
-        binding.previewCard.post {
-            val width = binding.previewCard.width
-            if (width <= 0) return@post
-            val height = (width.toFloat() * screenHeight / screenWidth).roundToInt()
-            val params = binding.previewCard.layoutParams
-            if (params.height != height) {
-                params.height = height
-                binding.previewCard.layoutParams = params
-            }
+    private fun showAdvancedSettings() {
+        val sheet = BottomSheetDialog(this)
+        val controls = DialogAdvancedSettingsBinding.inflate(layoutInflater)
+        sheet.setContentView(controls.root)
+        setupSpeedControl(controls)
+        setupRenderModeControl(controls)
+        setupPlaybackEngineControl(controls)
+        sheet.setOnDismissListener {
+            // Persist even when the sheet is dismissed before the debounce ends.
+            speedDebounceHandler.removeCallbacks(speedDebounceRunnable)
+            prefs.edit()
+                .putFloat(VideoWallpaperService.PREF_PLAYBACK_SPEED, currentSpeed)
+                .apply()
         }
-    }
-
-    private fun setupAdvancedControls(savedInstanceState: Bundle?) {
-        advancedExpanded = savedInstanceState?.getBoolean("advanced_expanded") ?: false
-        updateAdvancedControls()
-        binding.advancedToggle.setOnClickListener {
-            advancedExpanded = !advancedExpanded
-            updateAdvancedControls()
-        }
-    }
-
-    private fun updateAdvancedControls() {
-        binding.advancedContent.visibility = if (advancedExpanded) View.VISIBLE else View.GONE
-        binding.advancedToggle.setText(
-            if (advancedExpanded) R.string.hide_advanced_settings else R.string.advanced_settings
-        )
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        outState.putBoolean("advanced_expanded", advancedExpanded)
-        super.onSaveInstanceState(outState)
+        sheet.show()
     }
 
     private fun showPreviewLoading() {
@@ -187,14 +175,14 @@ class MainActivity : AppCompatActivity() {
     private fun progressToSpeed(progress: Int): Float = 0.25f + (progress * 0.05f)
     private fun speedToProgress(speed: Float): Int = (((speed - 0.25f) / 0.05f) + 0.5f).toInt()
 
-    private fun setupSpeedControl() {
-        binding.speedSeekBar.progress = speedToProgress(currentSpeed).coerceIn(0, 35)
-        updateSpeedLabel(currentSpeed)
+    private fun setupSpeedControl(controls: DialogAdvancedSettingsBinding) {
+        controls.speedSeekBar.progress = speedToProgress(currentSpeed).coerceIn(0, 35)
+        updateSpeedLabel(currentSpeed, controls)
 
-        binding.speedSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        controls.speedSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val speed = progressToSpeed(progress)
-                updateSpeedLabel(speed)
+                updateSpeedLabel(speed, controls)
                 if (fromUser) {
                     currentSpeed = speed
                     applySpeedToPreview(speed)
@@ -215,8 +203,8 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private fun updateSpeedLabel(speed: Float) {
-        binding.speedValueText.text = String.format("%.2fx", speed)
+    private fun updateSpeedLabel(speed: Float, controls: DialogAdvancedSettingsBinding) {
+        controls.speedValueText.text = String.format("%.2fx", speed)
     }
 
     private fun applySpeedToPreview(speed: Float) {
@@ -261,22 +249,22 @@ class MainActivity : AppCompatActivity() {
 
     // --- Video rendering mode -------------------------------------------
 
-    private fun setupRenderModeControl() {
+    private fun setupRenderModeControl(controls: DialogAdvancedSettingsBinding) {
         val saved = prefs.getInt(
             VideoWallpaperService.PREF_RENDER_MODE,
             VideoWallpaperService.DEFAULT_RENDER_MODE
         )
-        binding.renderModeToggleGroup.check(
+        controls.renderModeToggleGroup.check(
             if (saved == VideoWallpaperService.RENDER_MODE_EFFICIENT) {
-                binding.renderEfficientButton.id
+                controls.renderEfficientButton.id
             } else {
-                binding.renderCompatibleButton.id
+                controls.renderCompatibleButton.id
             }
         )
 
-        binding.renderModeToggleGroup.addOnButtonCheckedListener { _, checkedId, checked ->
+        controls.renderModeToggleGroup.addOnButtonCheckedListener { _, checkedId, checked ->
             if (!checked) return@addOnButtonCheckedListener
-            val newMode = if (checkedId == binding.renderEfficientButton.id) {
+            val newMode = if (checkedId == controls.renderEfficientButton.id) {
                 VideoWallpaperService.RENDER_MODE_EFFICIENT
             } else {
                 VideoWallpaperService.RENDER_MODE_COMPATIBLE
@@ -287,23 +275,23 @@ class MainActivity : AppCompatActivity() {
 
     // --- Video playback engine --------------------------------------------
 
-    private fun setupPlaybackEngineControl() {
+    private fun setupPlaybackEngineControl(controls: DialogAdvancedSettingsBinding) {
         val initial = PlaybackEnginePolicy.resolve(
             prefs.getInt(
                 VideoWallpaperService.PREF_PLAYBACK_ENGINE,
                 VideoWallpaperService.DEFAULT_PLAYBACK_ENGINE
             )
         )
-        binding.playbackEngineToggleGroup.check(
+        controls.playbackEngineToggleGroup.check(
             if (initial == VideoWallpaperService.PLAYBACK_ENGINE_MEDIA3) {
-                binding.playbackMedia3Button.id
+                controls.playbackMedia3Button.id
             } else {
-                binding.playbackSystemButton.id
+                controls.playbackSystemButton.id
             }
         )
-        binding.playbackEngineToggleGroup.addOnButtonCheckedListener { _, id, isChecked ->
+        controls.playbackEngineToggleGroup.addOnButtonCheckedListener { _, id, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
-            val engine = if (id == binding.playbackMedia3Button.id) {
+            val engine = if (id == controls.playbackMedia3Button.id) {
                 VideoWallpaperService.PLAYBACK_ENGINE_MEDIA3
             } else VideoWallpaperService.PLAYBACK_ENGINE_SYSTEM
             prefs.edit().putInt(VideoWallpaperService.PREF_PLAYBACK_ENGINE, engine).apply()
