@@ -26,8 +26,9 @@
     <string name="playback_engine_media3">Media3</string>
     <string name="version_format">v%1$s</string>
     <string name="crop_hint">Заповнити — обрізає краї; Умістити — показує весь кадр без розтягування.</string>
-    <string name="advanced_settings">Додаткові налаштування ▾</string>
+    <string name="advanced_settings">Налаштування відтворення</string>
     <string name="hide_advanced_settings">Приховати налаштування ▴</string>
     <string name="preview_loading">Завантаження попереднього перегляду…</string>
     <string name="error_preview_unavailable">Не вдалося відтворити цей файл. Виберіть інше відео або GIF.</string>
+    <string name="advanced_settings_title">Додаткові налаштування</string>
 </resources>
