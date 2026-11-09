@@ -129,11 +129,18 @@ class MainActivity : AppCompatActivity() {
         setupRenderModeControl(controls)
         setupPlaybackEngineControl(controls)
         sheet.setOnDismissListener {
-            // Persist even when the sheet is dismissed before the debounce ends.
+            // Persist a pending speed change, but don't trigger a wallpaper
+            // re-prepare when somebody merely opens and closes settings.
             speedDebounceHandler.removeCallbacks(speedDebounceRunnable)
-            prefs.edit()
-                .putFloat(VideoWallpaperService.PREF_PLAYBACK_SPEED, currentSpeed)
-                .apply()
+            val storedSpeed = prefs.getFloat(
+                VideoWallpaperService.PREF_PLAYBACK_SPEED,
+                VideoWallpaperService.DEFAULT_SPEED
+            )
+            if (storedSpeed != currentSpeed) {
+                prefs.edit()
+                    .putFloat(VideoWallpaperService.PREF_PLAYBACK_SPEED, currentSpeed)
+                    .apply()
+            }
         }
         sheet.show()
     }
