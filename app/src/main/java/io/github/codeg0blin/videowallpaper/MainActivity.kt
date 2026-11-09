@@ -22,6 +22,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.constraintlayout.widget.ConstraintLayout
+import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import androidx.preference.PreferenceManager
 import io.github.codeg0blin.videowallpaper.R
@@ -125,6 +126,8 @@ class MainActivity : AppCompatActivity() {
         val sheet = BottomSheetDialog(this)
         val controls = DialogAdvancedSettingsBinding.inflate(layoutInflater)
         sheet.setContentView(controls.root)
+        sheet.behavior.state = BottomSheetBehavior.STATE_EXPANDED
+        sheet.behavior.skipCollapsed = true
         setupSpeedControl(controls)
         setupRenderModeControl(controls)
         setupPlaybackEngineControl(controls)
