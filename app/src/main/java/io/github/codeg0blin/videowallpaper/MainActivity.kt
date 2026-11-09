@@ -21,7 +21,6 @@ import android.widget.SeekBar
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.preference.PreferenceManager
 import io.github.codeg0blin.videowallpaper.R
 import io.github.codeg0blin.videowallpaper.VideoWallpaperService
@@ -47,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     // In-app preview for GIFs (video keeps using the VideoView).
     private lateinit var gifPreview: GifPreview
     private var showingGif = false
+    private var advancedExpanded = false
 
     // Current preview MediaPlayer, captured so we can re-apply speed when the
     // slider moves without needing to re-prepare the whole VideoView.
@@ -89,6 +89,7 @@ class MainActivity : AppCompatActivity() {
         setupCropControl()
         setupRenderModeControl()
         setupPlaybackEngineControl()
+        setupAdvancedControls(savedInstanceState)
         restoreSelection()
 
         binding.pickButton.setOnClickListener {
@@ -101,11 +102,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Keep the preview's frame in the same proportions as the phone display,
-     * including the system bar areas. The preview card has two match-constraint
-     * dimensions, so ConstraintLayout makes it as large as the available space
-     * permits while retaining this exact ratio. On rotation Android recreates
-     * the activity and recalculates the ratio for the new display orientation.
+     * Size the scrollable preview to the device display proportions.
+     * Measuring after layout uses the actual available width (also in split screen).
      */
     @Suppress("DEPRECATION")
     private fun configurePreviewAspectRatio() {
@@ -119,9 +117,56 @@ class MainActivity : AppCompatActivity() {
             }
         if (screenWidth <= 0 || screenHeight <= 0) return
 
-        val params = binding.previewCard.layoutParams as ConstraintLayout.LayoutParams
-        params.dimensionRatio = "${screenWidth}:${screenHeight}"
-        binding.previewCard.layoutParams = params
+        binding.previewCard.post {
+            val width = binding.previewCard.width
+            if (width <= 0) return@post
+            val height = (width.toFloat() * screenHeight / screenWidth).roundToInt()
+            val params = binding.previewCard.layoutParams
+            if (params.height != height) {
+                params.height = height
+                binding.previewCard.layoutParams = params
+            }
+        }
+    }
+
+    private fun setupAdvancedControls(savedInstanceState: Bundle?) {
+        advancedExpanded = savedInstanceState?.getBoolean("advanced_expanded") ?: false
+        updateAdvancedControls()
+        binding.advancedToggle.setOnClickListener {
+            advancedExpanded = !advancedExpanded
+            updateAdvancedControls()
+        }
+    }
+
+    private fun updateAdvancedControls() {
+        binding.advancedContent.visibility = if (advancedExpanded) View.VISIBLE else View.GONE
+        binding.advancedToggle.setText(
+            if (advancedExpanded) R.string.hide_advanced_settings else R.string.advanced_settings
+        )
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("advanced_expanded", advancedExpanded)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun showPreviewLoading() {
+        binding.previewProgress.visibility = View.VISIBLE
+        binding.noVideoText.visibility = View.GONE
+        binding.setWallpaperButton.isEnabled = false
+    }
+
+    private fun showPreviewReady() {
+        binding.previewProgress.visibility = View.GONE
+        binding.noVideoText.visibility = View.GONE
+        binding.setWallpaperButton.isEnabled = true
+    }
+
+    private fun showPreviewError() {
+        binding.previewProgress.visibility = View.GONE
+        binding.noVideoText.setText(R.string.error_preview_unavailable)
+        binding.noVideoText.visibility = View.VISIBLE
+        binding.setWallpaperButton.isEnabled = false
     }
 
     /** The installed app's own versionName, so the on-screen label can't drift from build.gradle.kts. */
@@ -375,6 +420,7 @@ class MainActivity : AppCompatActivity() {
      * failure the previous selection and preview are left alone.
      */
     private fun loadGifPreview(uri: Uri, persistSelection: Boolean) {
+        showPreviewLoading()
         gifPreview.load(contentResolver, uri) { ok ->
             if (!ok) {
                 if (persistSelection) {
@@ -394,6 +440,12 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     // Restoring a saved selection that no longer loads: treat as no selection.
                     selectedVideoUri = null
+                }
+                if (persistSelection && selectedVideoUri != null && selectedVideoUri != uri) {
+                    // A failed new GIF must not destroy the previously selected wallpaper.
+                    showPreview(selectedVideoUri!!)
+                } else {
+                    showPreviewError()
                 }
                 return@load
             }
@@ -417,7 +469,7 @@ class MainActivity : AppCompatActivity() {
             if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
                 gifPreview.start()
             }
-            binding.setWallpaperButton.isEnabled = true
+            showPreviewReady()
         }
     }
 
@@ -432,18 +484,18 @@ class MainActivity : AppCompatActivity() {
     private fun showVideoPreview(uri: Uri) {
         showingGif = false
         gifPreview.stop()
+        showPreviewLoading()
         binding.previewGif.visibility = View.GONE
-        binding.noVideoText.visibility = View.GONE
         binding.previewVideo.visibility = View.VISIBLE
-        binding.previewVideo.setVideoURI(uri)
+        binding.previewVideo.setOnErrorListener { _, _, _ ->
+            if (selectedVideoUri == uri) showPreviewError()
+            true
+        }
+        // Install callbacks before setting the URI to avoid missing a quick prepare.
         binding.previewVideo.setOnPreparedListener { mp ->
             mp.isLooping = true
             mp.setVolume(0f, 0f)
             previewPlayer = mp
-            // Preflight the actual video dimensions once in the already
-            // prepared preview. The wallpaper can then safely use direct
-            // output only if its own Surface has matching proportions.
-            // Key by URI to avoid ever applying dimensions from a prior file.
             if (selectedVideoUri == uri && mp.videoWidth > 0 && mp.videoHeight > 0) {
                 prefs.edit()
                     .putString(VideoWallpaperService.PREF_SOURCE_ASPECT_URI, uri.toString())
@@ -454,9 +506,9 @@ class MainActivity : AppCompatActivity() {
             applyCropToVideoPreview()
             binding.previewVideo.start()
             applySpeedToPreview(currentSpeed)
+            showPreviewReady()
         }
-
-        binding.setWallpaperButton.isEnabled = true
+        binding.previewVideo.setVideoURI(uri)
     }
 
     private fun launchLiveWallpaperPicker() {
