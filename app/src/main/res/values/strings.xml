@@ -27,8 +27,9 @@
     <string name="version_format">v%1$s</string>
 
     <string name="crop_hint">Fill crops the edges; Fit shows the entire frame without stretching.</string>
-    <string name="advanced_settings">Advanced options ▾</string>
+    <string name="advanced_settings">More settings</string>
     <string name="hide_advanced_settings">Hide advanced options ▴</string>
     <string name="preview_loading">Loading preview…</string>
     <string name="error_preview_unavailable">Unable to preview this file. Choose another video or GIF.</string>
+    <string name="advanced_settings_title">Advanced settings</string>
 </resources>
