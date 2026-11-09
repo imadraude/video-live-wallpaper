@@ -28,7 +28,7 @@ The workflow uses a stable signing key. Maintainers must configure these reposit
 
 The keystore alias is `video-wallpaper`. Never commit the keystore or its password to Git. Back up both securely: losing the signing key prevents normal upgrades to APKs signed with that key.
 
-The public version comes from `appVersionName` in `gradle.properties` (currently `1.4.1`). To publish a later version, update that property in a reviewed commit, then either push the matching `vX.Y.Z` tag from the intended release commit or land a deliberate `release: vX.Y.Z` commit on `main`. The release workflow validates that the version matches the tag or commit subject and publishes the signed APK exactly once. For a release-commit-triggered build, `gh release create` also creates the corresponding version tag. Ordinary changes to README or `main` alone do not publish an APK.
+The public version comes from `appVersionName` in `gradle.properties` (currently `1.4.2`). To publish a later version, update that property in a reviewed commit, then either push the matching `vX.Y.Z` tag from the intended release commit or land a deliberate `release: vX.Y.Z` commit on `main`. The release workflow validates that the version matches the tag or commit subject and publishes the signed APK exactly once. For a release-commit-triggered build, `gh release create` also creates the corresponding version tag. Ordinary changes to README or `main` alone do not publish an APK.
 
 Android's separate, monotonically increasing `versionCode` still uses GitHub Actions' run number, plus a fixed offset. This ensures new signed releases can upgrade older ones even though the public version no longer contains the CI run number.
 

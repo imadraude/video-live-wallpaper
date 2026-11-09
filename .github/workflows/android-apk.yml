@@ -133,11 +133,10 @@ jobs:
           fi
           gh release create "$TAG" "$APK" --target "$GITHUB_SHA" \
             --title "Video Wallpaper $TAG" \
-            --notes "## What's new in v1.4.1
-          - A scrollable editor makes the controls accessible on small screens.
-          - The wallpaper action stays visible at the bottom.
-          - Playback engine and rendering choices are grouped under Advanced options.
-          - Larger touch controls, simpler scaling labels, and clearer Ukrainian and English guidance.
-          - Improved preview loading and error states, with device-screen aspect ratio retained.
+            --notes "## What's new in v1.4.2
+          - The full phone-shaped wallpaper preview is visible without scrolling the main screen.
+          - Playback speed and technical rendering options now live in a separate settings sheet.
+          - File picker, Fill/Fit scaling and Set Wallpaper remain close at hand.
+          - Keeps the improved preview loading, error handling and Ukrainian localization.
 
           Update through Obtainium, or install the signed APK from the assets below."
