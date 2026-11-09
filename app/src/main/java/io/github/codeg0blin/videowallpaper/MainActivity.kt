@@ -243,12 +243,8 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putInt(VideoWallpaperService.Companion.PREF_SCALING_MODE, currentScalingMode).apply()
             applyCropToGifPreview()
             applyCropToVideoPreview()
-            // Crop mode for VideoView itself is controlled by view scaleType,
-            // which VideoView doesn't expose directly the way MediaPlayer does
-            // for a raw Surface — the preview already fills its card via
-            // layout_gravity=center, so this setting's visual effect is most
-            // apparent once actually set as a wallpaper. We still persist it
-            // here so the wallpaper service picks it up immediately.
+            // PlayerView applies Fit/Fill immediately; the preference also
+            // tells the wallpaper engine how to crop its own output.
         }
     }
 
