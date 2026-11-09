@@ -85,11 +85,16 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent">
 
-            <VideoView
+            <!-- Media3 repeats one prepared media item instead of restarting
+                 a platform VideoView at each video boundary. TextureView
+                 clips reliably to the rounded preview card. -->
+            <androidx.media3.ui.PlayerView
                 android:id="@+id/previewVideo"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:layout_gravity="center" />
+                app:use_controller="false"
+                app:surface_type="texture_view"
+                app:resize_mode="zoom" />
 
             <ImageView
                 android:id="@+id/previewGif"

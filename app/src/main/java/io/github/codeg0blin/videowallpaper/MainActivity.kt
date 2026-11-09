@@ -8,14 +8,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.SharedPreferences
 import android.media.MediaPlayer
-import android.media.PlaybackParams
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
-import android.view.Gravity
-import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.Toast
@@ -29,9 +26,13 @@ import io.github.codeg0blin.videowallpaper.R
 import io.github.codeg0blin.videowallpaper.VideoWallpaperService
 import io.github.codeg0blin.videowallpaper.databinding.ActivityMainBinding
 import io.github.codeg0blin.videowallpaper.databinding.DialogAdvancedSettingsBinding
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 
 /**
  * Lets the user pick a video, preview it, and set it as a live wallpaper
@@ -47,13 +48,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
     private var selectedVideoUri: Uri? = null
 
-    // In-app preview for GIFs (video keeps using the VideoView).
+    // GIFs have their own decoder; videos use the same Media3 engine family as wallpapers.
     private lateinit var gifPreview: GifPreview
     private var showingGif = false
 
-    // Current preview MediaPlayer, captured so we can re-apply speed when the
-    // slider moves without needing to re-prepare the whole VideoView.
-    private var previewPlayer: MediaPlayer? = null
+    // Keep a single prepared decoder for the whole preview session. Media3's
+    // repeat timeline loops without VideoView's platform-level restart path.
+    private var previewPlayer: ExoPlayer? = null
     private var currentSpeed: Float = VideoWallpaperService.Companion.DEFAULT_SPEED
     private var currentScalingMode: Int = VideoWallpaperService.Companion.DEFAULT_SCALING_MODE
 
@@ -218,14 +219,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applySpeedToPreview(speed: Float) {
-        val player = previewPlayer ?: return
-        try {
-            if (!player.isPlaying) player.start()
-            player.playbackParams = PlaybackParams().setSpeed(speed)
-        } catch (e: IllegalStateException) {
-            // Player not in a state that accepts speed changes right now (e.g.
-            // mid-teardown) — safe to ignore, the next prepare will apply it.
-        }
+        // Changing speed never recreates or seeks the decoder.
+        previewPlayer?.setPlaybackSpeed(speed)
     }
 
     // --- Crop / scaling mode control ------------------------------------
@@ -248,12 +243,8 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putInt(VideoWallpaperService.Companion.PREF_SCALING_MODE, currentScalingMode).apply()
             applyCropToGifPreview()
             applyCropToVideoPreview()
-            // Crop mode for VideoView itself is controlled by view scaleType,
-            // which VideoView doesn't expose directly the way MediaPlayer does
-            // for a raw Surface — the preview already fills its card via
-            // layout_gravity=center, so this setting's visual effect is most
-            // apparent once actually set as a wallpaper. We still persist it
-            // here so the wallpaper service picks it up immediately.
+            // PlayerView applies Fit/Fill immediately; the preference also
+            // tells the wallpaper engine how to crop its own output.
         }
     }
 
@@ -363,41 +354,17 @@ class MainActivity : AppCompatActivity() {
     // --- Video preview crop ------------------------------------------------
 
     /**
-     * Makes the video preview show the chosen crop mode the way the wallpaper
-     * does. VideoView always fits the whole picture inside its own bounds, so
-     * rather than replacing it, we size the view itself: for Fit it is the
-     * largest size that fits the preview card, for Fill the smallest size
-     * that covers it, and the card (the parent frame) clips whatever sticks
-     * out. The size keeps the video's aspect ratio, so VideoView adds no
-     * letterboxing of its own. Does nothing until the player knows the
-     * video's size and the frame has been laid out.
+     * PlayerView handles the video's dimensions, rotation and pixel aspect
+     * ratio. Resize the video within the preview card instead of repeatedly
+     * resizing/recreating the underlying Surface when the crop changes.
      */
     private fun applyCropToVideoPreview() {
-        val player = previewPlayer ?: return
-        val frame = binding.previewFrame
-        val videoW = try { player.videoWidth } catch (e: IllegalStateException) { 0 }
-        val videoH = try { player.videoHeight } catch (e: IllegalStateException) { 0 }
-        val frameW = frame.width
-        val frameH = frame.height
-        if (videoW <= 0 || videoH <= 0 || frameW <= 0 || frameH <= 0) return
-
-        val scaleX = frameW.toFloat() / videoW
-        val scaleY = frameH.toFloat() / videoH
-        val scale = if (currentScalingMode == MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT) {
-            min(scaleX, scaleY)
-        } else {
-            max(scaleX, scaleY)
-        }
-        val width = (videoW * scale).roundToInt()
-        val height = (videoH * scale).roundToInt()
-
-        val params = binding.previewVideo.layoutParams as? FrameLayout.LayoutParams ?: return
-        if (params.width != width || params.height != height || params.gravity != Gravity.CENTER) {
-            params.width = width
-            params.height = height
-            params.gravity = Gravity.CENTER
-            binding.previewVideo.layoutParams = params
-        }
+        binding.previewVideo.resizeMode =
+            if (currentScalingMode == MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT) {
+                AspectRatioFrameLayout.RESIZE_MODE_FIT
+            } else {
+                AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            }
     }
 
     // --- GIF preview ------------------------------------------------------
@@ -457,9 +424,8 @@ class MainActivity : AppCompatActivity() {
             }
             showingGif = true
 
-            binding.previewVideo.stopPlayback()
+            releaseVideoPreview()
             binding.previewVideo.visibility = View.GONE
-            previewPlayer = null
             binding.noVideoText.visibility = View.GONE
             binding.previewGif.visibility = View.VISIBLE
             applyCropToGifPreview()
@@ -479,34 +445,72 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun releaseVideoPreview() {
+        val player = previewPlayer
+        previewPlayer = null
+        // Detach the surface before freeing the codec, including when a GIF is selected.
+        binding.previewVideo.player = null
+        player?.release()
+    }
+
     private fun showVideoPreview(uri: Uri) {
         showingGif = false
         gifPreview.stop()
         showPreviewLoading()
         binding.previewGif.visibility = View.GONE
         binding.previewVideo.visibility = View.VISIBLE
-        binding.previewVideo.setOnErrorListener { _, _, _ ->
-            if (selectedVideoUri == uri) showPreviewError()
-            true
+        releaseVideoPreview()
+        applyCropToVideoPreview()
+
+        try {
+            val player = ExoPlayer.Builder(this).build()
+            previewPlayer = player
+            binding.previewVideo.player = player
+
+            // Loop inside ExoPlayer's timeline. A manual seek or a MediaPlayer
+            // completion/restart at every boundary can produce a visible pause.
+            player.repeatMode = Player.REPEAT_MODE_ONE
+            player.volume = 0f
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                .build()
+            player.setPlaybackSpeed(currentSpeed)
+            player.addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (previewPlayer !== player || selectedVideoUri != uri) return
+                    if (playbackState == Player.STATE_READY) showPreviewReady()
+                }
+
+                override fun onVideoSizeChanged(videoSize: VideoSize) {
+                    if (previewPlayer !== player || selectedVideoUri != uri) return
+                    if (videoSize.width <= 0 || videoSize.height <= 0) return
+                    // Store the displayed (rotation-corrected) aspect for the
+                    // wallpaper engine's preview/mode decisions.
+                    val rotated = videoSize.unappliedRotationDegrees % 180 != 0
+                    val width = if (rotated) videoSize.height else videoSize.width
+                    val height = if (rotated) videoSize.width else videoSize.height
+                    prefs.edit()
+                        .putString(VideoWallpaperService.PREF_SOURCE_ASPECT_URI, uri.toString())
+                        .putInt(VideoWallpaperService.PREF_SOURCE_ASPECT_WIDTH, width)
+                        .putInt(VideoWallpaperService.PREF_SOURCE_ASPECT_HEIGHT, height)
+                        .apply()
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    if (previewPlayer === player && selectedVideoUri == uri) {
+                        showPreviewError()
+                    }
+                }
+            })
+            player.setMediaItem(MediaItem.fromUri(uri))
+            player.prepare()
+            // Never decode in the background while the wallpaper picker is open.
+            player.playWhenReady =
+                lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+        } catch (e: Exception) {
+            releaseVideoPreview()
+            showPreviewError()
         }
-        // Install callbacks before setting the URI to avoid missing a quick prepare.
-        binding.previewVideo.setOnPreparedListener { mp ->
-            mp.isLooping = true
-            mp.setVolume(0f, 0f)
-            previewPlayer = mp
-            if (selectedVideoUri == uri && mp.videoWidth > 0 && mp.videoHeight > 0) {
-                prefs.edit()
-                    .putString(VideoWallpaperService.PREF_SOURCE_ASPECT_URI, uri.toString())
-                    .putInt(VideoWallpaperService.PREF_SOURCE_ASPECT_WIDTH, mp.videoWidth)
-                    .putInt(VideoWallpaperService.PREF_SOURCE_ASPECT_HEIGHT, mp.videoHeight)
-                    .apply()
-            }
-            applyCropToVideoPreview()
-            binding.previewVideo.start()
-            applySpeedToPreview(currentSpeed)
-            showPreviewReady()
-        }
-        binding.previewVideo.setVideoURI(uri)
     }
 
     private fun launchLiveWallpaperPicker() {
@@ -532,32 +536,21 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (showingGif) {
             gifPreview.start()
-            return
-        }
-        selectedVideoUri?.let {
-            if (!binding.previewVideo.isPlaying) {
-                binding.previewVideo.start()
-            }
+        } else {
+            previewPlayer?.playWhenReady = true
         }
     }
 
     override fun onPause() {
         super.onPause()
         gifPreview.pause()
-        if (binding.previewVideo.isPlaying) {
-            binding.previewVideo.pause()
-        }
-        // previewPlayer is deliberately kept: VideoView reuses the same
-        // MediaPlayer when the activity resumes, and clearing it here left
-        // the speed slider with nothing to control until a new video was
-        // picked. If VideoView does release its player (surface destroyed),
-        // its prepared listener runs again and replaces this reference, and
-        // applySpeedToPreview already tolerates a stale player.
+        previewPlayer?.playWhenReady = false
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         gifPreview.release()
+        releaseVideoPreview()
         speedDebounceHandler.removeCallbacks(speedDebounceRunnable)
+        super.onDestroy()
     }
 }
