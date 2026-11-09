@@ -73,6 +73,7 @@ dependencies {
     implementation("androidx.preference:preference-ktx:1.2.1")
     // Default video playback engine; MediaPlayer remains available as a fallback.
     implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-ui:1.11.1")
 
     testImplementation("junit:junit:4.13.2")
 }
