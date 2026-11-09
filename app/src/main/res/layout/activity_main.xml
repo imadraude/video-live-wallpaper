@@ -58,7 +58,8 @@
         android:layout_marginTop="16dp"
         app:cardBackgroundColor="@color/surface"
         app:cardCornerRadius="16dp"
-        app:cardElevation="0dp"  android:clipToOutline="true">
+        app:cardElevation="0dp"
+        android:clipToOutline="true">
     <FrameLayout
         android:id="@+id/previewFrame"
         android:layout_width="match_parent"
@@ -93,6 +94,7 @@
             android:layout_height="40dp"
             android:layout_gravity="center"
             android:indeterminate="true"
+            android:contentDescription="@string/preview_loading"
             android:visibility="gone" />
     </FrameLayout>
     </androidx.cardview.widget.CardView>
@@ -113,13 +115,13 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:gravity="center_vertical"
+                android:layout_marginTop="16dp">
     <TextView
         android:id="@+id/speedLabel"
         android:layout_width="0dp"
         android:layout_weight="1"
         android:layout_height="wrap_content"
-        android:layout_marginTop="18dp"
         android:text="@string/speed_label"
         android:textColor="@color/text_primary"
         android:textSize="14sp" />
