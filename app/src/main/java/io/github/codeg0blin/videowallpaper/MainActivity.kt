@@ -118,7 +118,7 @@ class MainActivity : AppCompatActivity() {
             }
         if (screenWidth <= 0 || screenHeight <= 0) return
         val params = binding.previewCard.layoutParams as ConstraintLayout.LayoutParams
-        params.dimensionRatio = "$screenWidth:$screenHeight"
+        params.dimensionRatio = "W,$screenWidth:$screenHeight"
         binding.previewCard.layoutParams = params
     }
 
